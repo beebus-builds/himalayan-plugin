@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0b3d91"/>
+      <stop offset="1" stop-color="#1f6feb"/>
+    </linearGradient>
+  </defs>
+  <rect width="128" height="128" rx="24" fill="url(#sky)"/>
+  <!-- Snowy mountain -->
+  <path d="M8 104 L40 52 L58 80 L78 40 L120 104 Z" fill="#ffffff"/>
+  <path d="M40 52 L48 66 L34 66 Z" fill="#cfe3ff"/>
+  <path d="M78 40 L88 58 L68 58 Z" fill="#cfe3ff"/>
+  <!-- Check badge -->
+  <circle cx="92" cy="92" r="22" fill="#16a34a"/>
+  <path d="M82 92 l8 8 l13 -16" fill="none" stroke="#ffffff" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

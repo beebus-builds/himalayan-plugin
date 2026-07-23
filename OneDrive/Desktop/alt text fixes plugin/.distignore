@@ -1,0 +1,11 @@
+# Files/folders excluded when building the WordPress.org plugin zip.
+# (Used by tooling such as 10up/action-wordpress-plugin-deploy.)
+
+.github
+.gitattributes
+.distignore
+phpcs.xml.dist
+composer.json
+composer.lock
+vendor
+assets/*.svg

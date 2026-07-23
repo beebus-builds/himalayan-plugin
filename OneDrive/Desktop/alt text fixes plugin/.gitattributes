@@ -1,0 +1,11 @@
+# Files to exclude from the WordPress.org / dist export.
+# Keep the runtime plugin lean; dev tooling stays in the Git repo only.
+
+.github/          export-ignore
+.gitattributes   export-ignore
+.distignore       export-ignore
+phpcs.xml.dist    export-ignore
+composer.json     export-ignore
+composer.lock     export-ignore
+vendor/           export-ignore
+assets/*.svg      export-ignore

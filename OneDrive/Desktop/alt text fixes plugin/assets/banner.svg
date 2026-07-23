@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="772" height="250" viewBox="0 0 772 250">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0b3d91"/>
+      <stop offset="1" stop-color="#1f6feb"/>
+    </linearGradient>
+  </defs>
+  <rect width="772" height="250" fill="url(#sky)"/>
+  <!-- Mountain range -->
+  <path d="M0 210 L150 90 L250 170 L360 60 L520 200 L640 110 L772 210 L772 250 L0 250 Z" fill="#ffffff"/>
+  <path d="M360 60 L392 104 L328 104 Z" fill="#cfe3ff"/>
+  <path d="M150 90 L176 126 L124 126 Z" fill="#cfe3ff"/>
+  <path d="M640 110 L664 146 L616 146 Z" fill="#cfe3ff"/>
+  <!-- Title -->
+  <text x="40" y="60" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="38" font-weight="700" fill="#ffffff">Himalayan Auto-Fixer</text>
+  <text x="42" y="92" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="18" fill="#cfe3ff">Alt Text &amp; SEO Automation</text>
+  <!-- Check badge -->
+  <circle cx="700" cy="180" r="34" fill="#16a34a"/>
+  <path d="M684 180 l11 11 l18 -22" fill="none" stroke="#ffffff" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

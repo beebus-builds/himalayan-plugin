@@ -1,0 +1,58 @@
+:root {
+	--atf-primary: #2271b1;
+	--atf-bg: #f0f0f1;
+	--atf-shadow: 0 2px 8px rgba(0,0,0,0.05);
+	--atf-radius: 8px;
+}
+
+.atf-ok { color: #008a20; font-weight: 600; }
+.atf-warn { color: #d63638; font-weight: 600; }
+.atf-missing { color: #d63638; font-weight: 600; }
+
+/* Dashboard Cards */
+.atf-card, .atf-dash-card {
+	background: #fff;
+	border: none;
+	border-radius: var(--atf-radius);
+	box-shadow: var(--atf-shadow);
+	padding: 24px;
+	margin-bottom: 24px;
+}
+
+.atf-dash-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+	gap: 24px;
+	margin: 24px 0;
+}
+
+.atf-dash-card {
+	border-left: 6px solid var(--atf-primary);
+	display: flex;
+	flex-direction: column;
+}
+
+.atf-dash-num {
+	font-size: 42px;
+	font-weight: 800;
+	margin: 8px 0;
+	color: #1e1e1e;
+}
+
+/* Progress Bar */
+.atf-progress-bar {
+	background: #eee;
+	border-radius: 10px;
+	height: 10px;
+	overflow: hidden;
+}
+
+.atf-progress-fill {
+	background: linear-gradient(90deg, var(--atf-primary), #135e96);
+	height: 100%;
+}
+
+/* Typography & Layout */
+.atf-dashboard h1 { margin-bottom: 30px; }
+h2 { font-size: 18px; color: #1e1e1e; }
+

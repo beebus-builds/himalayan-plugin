@@ -1,0 +1,46 @@
+<?xml version="1.0"?>
+<ruleset name="Himalayan Auto-Fixer">
+	<description>Coding standards for the Himalayan Auto-Fixer plugin.</description>
+
+	<file>.</file>
+	<exclude-pattern>/vendor/*</exclude-pattern>
+	<exclude-pattern>/node_modules/*</exclude-pattern>
+	<exclude-pattern>*/assets/*</exclude-pattern>
+
+	<!-- Base standards -->
+	<rule ref="WordPress-Extra" />
+
+	<!-- Minimum PHP version for the plugin -->
+	<config name="testVersion" value="7.4-"/>
+	<rule ref="PHPCompatibilityWP"/>
+
+	<arg value="sp"/>
+	<arg name="basepath" value="."/>
+	<arg name="parallel" value="8"/>
+	<arg name="extensions" value="php"/>
+
+	<!-- Project-specific relaxations (intentional design choices) -->
+	<rule ref="WordPress.Files.FileName">
+		<properties>
+			<property name="strict_class_file_names" type="bool" value="false"/>
+		</properties>
+	</rule>
+
+	<!-- Direct $wpdb queries are used intentionally for bulk scans -->
+	<rule ref="WordPress.DB.DirectDatabaseQuery">
+		<properties>
+			<property name="parking" type="bool" value="false"/>
+		</properties>
+		<exclude name="WordPress.DB.DirectDatabaseQuery.NoCaching" />
+	</rule>
+
+	<!-- Allow the file_get_contents/fopen usage in the CSV importer -->
+	<rule ref="WordPress.WP.AlternativeFunctions">
+		<exclude name="WordPress.WP.AlternativeFunctions.file_system_read_fopen" />
+		<exclude name="WordPress.WP.AlternativeFunctions.file_system_read_fclose" />
+	</rule>
+
+	<rule ref="Generic.Files.LowercasedFilename">
+		<severity>0</severity>
+	</rule>
+</ruleset>
