@@ -17,6 +17,7 @@ if ( ! defined( 'WP_UNINSTALL_PLUGIN' ) ) {
 // Remove options.
 delete_option( 'atf_settings' );
 delete_option( 'atf_seo_settings' );
+delete_option( 'atf_schema_org' );
 
 // Remove scheduled cron event.
 $timestamp = wp_next_scheduled( 'atf_daily_autofix' );
@@ -29,9 +30,15 @@ global $wpdb;
 // phpcs:ignore WordPress.DB.DirectDatabaseQuery
 $wpdb->query(
 	$wpdb->prepare(
-		"DELETE FROM {$wpdb->postmeta} WHERE meta_key IN ( %s, %s, %s )",
+		"DELETE FROM {$wpdb->postmeta} WHERE meta_key IN ( %s, %s, %s, %s, %s, %s, %s, %s, %s )",
 		'_atf_seo_title',
 		'_atf_seo_desc',
-		'_atf_seo_image'
+		'_atf_seo_image',
+		'_atf_faq',
+		'_atf_schema_custom',
+		'_atf_schema_type',
+		'_atf_schema_fields',
+		'_atf_schema_done',
+		'_atf_seo_title_trashed'
 	)
 );

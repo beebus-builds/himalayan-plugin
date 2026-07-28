@@ -48,8 +48,6 @@ class ATF_Tech_Audit {
 		$checks[] = self::check_indexing();
 		$checks[] = self::check_viewport();
 		$checks[] = self::check_noindex_sample();
-		$checks[] = self::check_sitemap_in_robots();
-		$checks[] = self::check_sitemap_in_robots();
 		$checks[] = self::check_permalinks();
 		$checks[] = self::check_internal_3xx();
 		$checks[] = self::check_external_3xx();
@@ -168,8 +166,14 @@ class ATF_Tech_Audit {
 		}
 		$bad = 0;
 		foreach ( $posts as $pid ) {
-			$title = ATF_SEO::get_title( $pid );
-			$desc  = ATF_SEO::get_description( $pid );
+			$title = get_post_meta( $pid, ATF_SEO::TITLE_META, true );
+			$desc  = get_post_meta( $pid, ATF_SEO::DESC_META, true );
+			if ( '' === $title ) {
+				$title = ATF_SEO::generate_title( $pid );
+			}
+			if ( '' === $desc ) {
+				$desc = ATF_SEO::generate_description( $pid );
+			}
 			$tlen  = mb_strlen( $title );
 			$dlen  = mb_strlen( $desc );
 			if ( $tlen < 10 || $tlen > 70 || $dlen < 50 || $dlen > 320 ) {
@@ -485,3 +489,5 @@ class ATF_Tech_Audit {
 		wp_send_json_success( array( 'fixed' => $done ) );
 	}
 }
+
+ATF_Tech_Audit::init();

@@ -78,36 +78,44 @@ class ATF_Bulk_Fixer {
 			wp_send_json_error( 'permission' );
 		}
 
-		$offset = isset( $_POST['offset'] ) ? (int) $_POST['offset'] : 0;
-		$limit  = isset( $_POST['limit'] ) ? (int) $_POST['limit'] : self::BATCH_SIZE;
-		if ( $limit < 1 || $limit > 500 ) {
-			$limit = self::BATCH_SIZE;
-		}
-
-		$ids = self::get_missing_alt_attachments( $offset, $limit );
-		$queued = 0;
-		$excluded = ATF_Content_Fixer::get_excluded_ids();
-
-		foreach ( $ids as $id ) {
-			if ( in_array( $id, $excluded, true ) ) {
-				continue;
+		try {
+			$offset = isset( $_POST['offset'] ) ? (int) $_POST['offset'] : 0;
+			$limit  = isset( $_POST['limit'] ) ? (int) $_POST['limit'] : self::BATCH_SIZE;
+			if ( $limit < 1 || $limit > 500 ) {
+				$limit = self::BATCH_SIZE;
 			}
-			// Schedule the async action.
-			as_enqueue_async_action( 'atf_fix_attachment', array( $id ) );
-			$queued++;
+
+			$ids = self::get_missing_alt_attachments( $offset, $limit );
+			$queued = 0;
+			$excluded = ATF_Content_Fixer::get_excluded_ids();
+
+			foreach ( $ids as $id ) {
+				if ( in_array( $id, $excluded, true ) ) {
+					continue;
+				}
+				// Schedule the async action.
+				if ( class_exists( 'ActionScheduler' ) && function_exists( 'as_enqueue_async_action' ) ) {
+					as_enqueue_async_action( 'atf_fix_attachment', array( $id ) );
+				} else {
+					self::do_fix_attachment( $id );
+				}
+				$queued++;
+			}
+
+			$remaining = self::count_missing_alt();
+			$processed = $offset + count( $ids );
+
+			wp_send_json_success(
+				array(
+					'queued'    => $queued,
+					'processed' => $processed,
+					'remaining' => $remaining,
+					'finished'  => $remaining <= 0,
+				)
+			);
+		} catch ( Exception $e ) {
+			wp_send_json_error( $e->getMessage() );
 		}
-
-		$remaining = self::count_missing_alt();
-		$processed = $offset + count( $ids );
-
-		wp_send_json_success(
-			array(
-				'queued'    => $queued,
-				'processed' => $processed,
-				'remaining' => $remaining,
-				'finished'  => $remaining <= 0,
-			)
-		);
 	}
 
 	/**
@@ -143,6 +151,8 @@ class ATF_Bulk_Fixer {
 	 * @return int[]
 	 */
 	public static function get_missing_alt_attachments( $offset = 0, $limit = 50 ) {
+		$offset = max( 0, (int) $offset );
+		$limit  = max( 1, (int) $limit );
 		$excluded = ATF_Content_Fixer::get_excluded_ids();
 		$excluded_sql = '';
 		if ( ! empty( $excluded ) ) {

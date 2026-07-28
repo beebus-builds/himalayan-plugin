@@ -52,8 +52,8 @@ class ATF_CLI extends WP_CLI_Command {
 			$total = ATF_Bulk_Fixer::count_missing_alt();
 			$done  = 0;
 			WP_CLI::line( sprintf( 'Library: %d images.', $total ) );
-			foreach ( array_chunk( ATF_Bulk_Fixer::get_missing_alt_attachments( -1 ), $batch ) as $chunk ) {
-				foreach ( $chunk as $id ) {
+			for ( $offset = 0; $offset < $total; $offset += $batch ) {
+				foreach ( ATF_Bulk_Fixer::get_missing_alt_attachments( $offset, $batch ) as $id ) {
 					if ( $fixer->set_alt_text( $id ) ) {
 						$done ++;
 					}
@@ -64,25 +64,32 @@ class ATF_CLI extends WP_CLI_Command {
 
 		$post_scopes = array( 'content', 'meta', 'css' );
 		if ( 'all' === $scope || in_array( $scope, $post_scopes, true ) ) {
-			$posts = ATF_Content_Fixer::get_posts( 0, -1 );
-			$count = count( $posts );
 			$processed = 0;
-			foreach ( $posts as $pid ) {
-				if ( 'all' === $scope || 'content' === $scope ) {
-					ATF_Content_Fixer::fix_post_scope( $pid, 'content', $fixer );
+			$postOffset = 0;
+			$postBatch = 100;
+			while ( true ) {
+				$posts = ATF_Content_Fixer::get_posts( $postOffset, $postBatch );
+				if ( empty( $posts ) ) {
+					break;
 				}
-				if ( 'all' === $scope || 'meta' === $scope ) {
-					ATF_Content_Fixer::fix_post_scope( $pid, 'meta', $fixer );
+				foreach ( $posts as $pid ) {
+					if ( 'all' === $scope || 'content' === $scope ) {
+						ATF_Content_Fixer::fix_post_scope( $pid, 'content', $fixer );
+					}
+					if ( 'all' === $scope || 'meta' === $scope ) {
+						ATF_Content_Fixer::fix_post_scope( $pid, 'meta', $fixer );
+					}
+					if ( 'all' === $scope || 'css' === $scope ) {
+						ATF_Content_Fixer::fix_post_scope( $pid, 'css', $fixer );
+					}
+					$processed ++;
 				}
-				if ( 'all' === $scope || 'css' === $scope ) {
-					ATF_Content_Fixer::fix_post_scope( $pid, 'css', $fixer );
-				}
-				$processed ++;
-				if ( 0 === $processed % $batch ) {
-					WP_CLI::line( sprintf( '  posts %d/%d', $processed, $count ) );
+				$postOffset += $postBatch;
+				if ( count( $posts ) < $postBatch ) {
+					break;
 				}
 			}
-			WP_CLI::success( 'Post scopes done.' );
+			WP_CLI::success( sprintf( 'Post scopes done. Processed %d posts.', $processed ) );
 		}
 
 		if ( 'all' === $scope || 'global' === $scope ) {
@@ -144,14 +151,25 @@ class ATF_CLI extends WP_CLI_Command {
 	 * Generate/refresh schema markup state for all eligible posts.
 	 */
 	public function schema() {
-		$posts = ATF_Content_Fixer::get_posts( 0, -1 );
 		$total = 0;
 		$done  = 0;
-		foreach ( $posts as $pid ) {
-			if ( ATF_Schema::post_needs_schema( $pid ) ) {
-				$total ++;
-				ATF_Schema::mark_batch( $pid, 1 );
-				$done ++;
+		$batchSize = 100;
+		$offset = 0;
+		while ( true ) {
+			$posts = ATF_Content_Fixer::get_posts( $offset, $batchSize );
+			if ( empty( $posts ) ) {
+				break;
+			}
+			foreach ( $posts as $pid ) {
+				if ( ATF_Schema::post_needs_schema( $pid ) ) {
+					$total++;
+					update_post_meta( $pid, ATF_Schema::DONE_META, 1 );
+					$done++;
+				}
+			}
+			$offset += $batchSize;
+			if ( count( $posts ) < $batchSize ) {
+				break;
 			}
 		}
 		WP_CLI::success( sprintf( 'Schema state refreshed for %d of %d eligible posts.', $done, $total ) );

@@ -20,6 +20,7 @@ class ATF_Schema {
 	const TYPED_META   = '_atf_schema_type';
 	const TYPED_FIELDS = '_atf_schema_fields';
 	const ORG_OPTION   = 'atf_schema_org';
+	const DONE_META    = '_atf_schema_done';
 
 	/**
 	 * Supported guided schema types (besides the automatic ones).
@@ -693,7 +694,7 @@ class ATF_Schema {
 		}
 		// Any post that has FAQ, custom schema, or is a supported type counts as
 		// "has schema output" once we've marked it. We mark a post when we visit.
-		if ( get_post_meta( $post_id, '_atf_schema_done', true ) ) {
+		if ( get_post_meta( $post_id, self::DONE_META, true ) ) {
 			return false;
 		}
 		$supported = apply_filters(
@@ -714,10 +715,21 @@ class ATF_Schema {
 	 */
 	public static function count_posts_with_schema() {
 		$count = 0;
-		$posts = ATF_Content_Fixer::get_posts( 0, -1 );
-		foreach ( $posts as $pid ) {
-			if ( self::post_needs_schema( $pid ) ) {
-				$count ++;
+		$offset = 0;
+		$batch = 200;
+		while ( true ) {
+			$posts = ATF_Content_Fixer::get_posts( $offset, $batch );
+			if ( empty( $posts ) ) {
+				break;
+			}
+			foreach ( $posts as $pid ) {
+				if ( self::post_needs_schema( $pid ) ) {
+					$count++;
+				}
+			}
+			$offset += $batch;
+			if ( count( $posts ) < $batch ) {
+				break;
 			}
 		}
 		return $count;
@@ -735,7 +747,7 @@ class ATF_Schema {
 		$done  = 0;
 		foreach ( $posts as $pid ) {
 			if ( self::post_needs_schema( $pid ) ) {
-				update_post_meta( $pid, '_atf_schema_done', 1 );
+				update_post_meta( $pid, self::DONE_META, 1 );
 				$done ++;
 			}
 		}
@@ -750,14 +762,7 @@ class ATF_Schema {
 		if ( ! current_user_can( 'manage_options' ) ) {
 			wp_send_json_error( 'permission' );
 		}
-		$total = 0;
-		$posts = ATF_Content_Fixer::get_posts( 0, -1 );
-		foreach ( $posts as $pid ) {
-			if ( self::post_needs_schema( $pid ) ) {
-				$total ++;
-			}
-		}
-		wp_send_json_success( array( 'total' => $total ) );
+		wp_send_json_success( array( 'total' => self::count_posts_with_schema() ) );
 	}
 
 	/**
@@ -774,15 +779,8 @@ class ATF_Schema {
 			$limit = 50;
 		}
 		$done = self::mark_batch( $offset, $limit );
-
-		$posts    = ATF_Content_Fixer::get_posts( 0, -1 );
-		$total    = 0;
-		foreach ( $posts as $pid ) {
-			if ( self::post_needs_schema( $pid ) ) {
-				$total ++;
-			}
-		}
-		$processed = $offset + count( $posts );
+		$total = self::count_posts_with_schema();
+		$processed = $offset + $limit;
 		wp_send_json_success(
 			array(
 				'fixed'     => $done,
@@ -1045,3 +1043,5 @@ class ATF_Schema {
 		return $out;
 	}
 }
+
+ATF_Schema::init();

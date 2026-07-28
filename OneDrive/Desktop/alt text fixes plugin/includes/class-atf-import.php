@@ -112,6 +112,16 @@ class ATF_Import {
 			exit;
 		}
 
+		if ( $_FILES['atf_csv']['size'] > 10 * 1024 * 1024 ) {
+			wp_safe_redirect( add_query_arg( 'atf_import', 'toolarge', admin_url( 'options-general.php?page=alt-text-fixer' ) ) );
+			exit;
+		}
+
+		if ( ! in_array( mime_content_type( $_FILES['atf_csv']['tmp_name'] ), array( 'text/csv', 'text/plain', 'application/csv', 'text/x-csv' ), true ) ) {
+			wp_safe_redirect( add_query_arg( 'atf_import', 'invalidtype', admin_url( 'options-general.php?page=alt-text-fixer' ) ) );
+			exit;
+		}
+
 		$rows = self::parse_csv( $_FILES['atf_csv']['tmp_name'] );
 		if ( false === $rows ) {
 			wp_safe_redirect( add_query_arg( 'atf_import', 'parse', admin_url( 'options-general.php?page=alt-text-fixer' ) ) );
@@ -305,8 +315,18 @@ class ATF_Import {
 			$path = parse_url( $ref, PHP_URL_PATH );
 			$ref  = trim( $path, '/' );
 		}
-		$post = get_page_by_path( $ref, OBJECT, get_post_types( array( 'public' => true ) ) );
-		return $post ? $post->ID : false;
+		$query = new WP_Query(
+			array(
+				'name'             => $ref,
+				'post_type'        => get_post_types( array( 'public' => true ) ),
+				'post_status'      => 'any',
+				'posts_per_page'   => 1,
+				'fields'           => 'ids',
+				'no_found_rows'    => true,
+				'ignore_sticky_posts' => true,
+			)
+		);
+		return $query->have_posts() ? (int) $query->posts[0] : false;
 	}
 }
 

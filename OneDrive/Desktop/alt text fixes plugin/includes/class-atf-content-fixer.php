@@ -131,24 +131,64 @@ class ATF_Content_Fixer {
 			wp_send_json_error( 'permission' );
 		}
 
-		$fixer = Alt_Text_Fixer::init();
-		$excluded = self::get_excluded_ids();
+		try {
+			$fixer = Alt_Text_Fixer::init();
+			$excluded = self::get_excluded_ids();
 
-		// Global scope (wp_options) is paged by option, not by post.
-		if ( 'global' === $scope ) {
+			// Global scope (wp_options) is paged by option, not by post.
+			if ( 'global' === $scope ) {
+				$offset = isset( $_POST['offset'] ) ? (int) $_POST['offset'] : 0;
+				$limit  = isset( $_POST['limit'] ) ? (int) $_POST['limit'] : self::BATCH_SIZE;
+				if ( $limit < 1 || $limit > 200 ) {
+					$limit = self::BATCH_SIZE;
+				}
+				$names     = array_slice( self::global_option_names(), $offset, $limit );
+				$queued = 0;
+				foreach ( $names as $name ) {
+					if ( class_exists( 'ActionScheduler' ) && function_exists( 'as_enqueue_async_action' ) ) {
+						as_enqueue_async_action( 'atf_fix_global_option', array( $name ) );
+					} else {
+						self::fix_global( 'global', $fixer, array( $name ) );
+					}
+					$queued++;
+				}
+				$remaining = self::count_scope( 'global' );
+				$processed = $offset + count( $names );
+				wp_send_json_success(
+					array(
+						'queued'    => $queued,
+						'processed' => $processed,
+						'remaining' => $remaining,
+						'finished'  => $remaining <= 0,
+					)
+				);
+				return;
+			}
+
 			$offset = isset( $_POST['offset'] ) ? (int) $_POST['offset'] : 0;
 			$limit  = isset( $_POST['limit'] ) ? (int) $_POST['limit'] : self::BATCH_SIZE;
 			if ( $limit < 1 || $limit > 200 ) {
 				$limit = self::BATCH_SIZE;
 			}
-			$names     = array_slice( self::global_option_names(), $offset, $limit );
+
+			$posts = self::get_posts( $offset, $limit );
+
 			$queued = 0;
-			foreach ( $names as $name ) {
-				as_enqueue_async_action( 'atf_fix_global_option', array( $name ) );
+			foreach ( $posts as $post_id ) {
+				if ( in_array( $post_id, $excluded, true ) ) {
+					continue;
+				}
+				if ( class_exists( 'ActionScheduler' ) && function_exists( 'as_enqueue_async_action' ) ) {
+					as_enqueue_async_action( 'atf_fix_post_' . $scope, array( $post_id ) );
+				} else {
+					self::fix_post_scope( $post_id, $scope, $fixer );
+				}
 				$queued++;
 			}
-			$remaining = self::count_scope( 'global' );
-			$processed = $offset + count( $names );
+
+			$remaining = self::count_scope( $scope );
+			$processed = $offset + count( $posts );
+
 			wp_send_json_success(
 				array(
 					'queued'    => $queued,
@@ -157,37 +197,9 @@ class ATF_Content_Fixer {
 					'finished'  => $remaining <= 0,
 				)
 			);
-			return;
+		} catch ( Exception $e ) {
+			wp_send_json_error( $e->getMessage() );
 		}
-
-		$offset = isset( $_POST['offset'] ) ? (int) $_POST['offset'] : 0;
-		$limit  = isset( $_POST['limit'] ) ? (int) $_POST['limit'] : self::BATCH_SIZE;
-		if ( $limit < 1 || $limit > 200 ) {
-			$limit = self::BATCH_SIZE;
-		}
-
-		$posts = self::get_posts( $offset, $limit );
-
-		$queued = 0;
-		foreach ( $posts as $post_id ) {
-			if ( in_array( $post_id, $excluded, true ) ) {
-				continue;
-			}
-			as_enqueue_async_action( 'atf_fix_post_' . $scope, array( $post_id ) );
-			$queued++;
-		}
-
-		$remaining = self::count_scope( $scope );
-		$processed = $offset + count( $posts );
-
-		wp_send_json_success(
-			array(
-				'queued'    => $queued,
-				'processed' => $processed,
-				'remaining' => $remaining,
-				'finished'  => $remaining <= 0,
-			)
-		);
 	}
 
 	/**
@@ -201,14 +213,25 @@ class ATF_Content_Fixer {
 			return self::count_global_options();
 		}
 		$excluded = self::get_excluded_ids();
-		$posts = self::get_posts( 0, -1 );
 		$count = 0;
-		foreach ( $posts as $post_id ) {
-			if ( in_array( $post_id, $excluded, true ) ) {
-				continue;
+		$offset = 0;
+		$batch = 200;
+		while ( true ) {
+			$posts = self::get_posts( $offset, $batch );
+			if ( empty( $posts ) ) {
+				break;
 			}
-			if ( self::post_needs_scope( $post_id, $scope ) ) {
-				$count ++;
+			foreach ( $posts as $post_id ) {
+				if ( in_array( $post_id, $excluded, true ) ) {
+					continue;
+				}
+				if ( self::post_needs_scope( $post_id, $scope ) ) {
+					$count++;
+				}
+			}
+			$offset += $batch;
+			if ( count( $posts ) < $batch ) {
+				break;
 			}
 		}
 		return $count;
@@ -319,7 +342,7 @@ class ATF_Content_Fixer {
 				if ( '' === $alt ) {
 					return $tag;
 				}
-				$tag       = preg_replace( '/\s+alt\s*=\s*("|\')\1/i', '', $tag );
+				$tag       = preg_replace( '/\s+alt\s*=\s*("|\').*?\1/i', '', $tag );
 				$selfclose = (bool) preg_match( '/\s*\/\s*>$/', $tag );
 				$tag       = preg_replace( '/\s*\/?\s*>$/', '', $tag );
 				$tag       = trim( $tag ) . ' alt="' . esc_attr( $alt ) . '"' . ( $selfclose ? ' />' : '>' );
@@ -517,10 +540,13 @@ class ATF_Content_Fixer {
 	 */
 	public static function maybe_unserialize_meta( $value ) {
 		$trimmed = trim( $value );
-		if ( ! is_string( $trimmed ) || ! in_array( $trimmed[0], array( 'a', 'O', 's', 'i', 'd', 'b', 'N' ), true ) ) {
+		if ( ! is_string( $trimmed ) || '' === $trimmed ) {
+			return $value;
+		}
+		if ( ! in_array( $trimmed[0], array( 'a', 'O', 's', 'i', 'd', 'b', 'N' ), true ) ) {
 			return $value; // Plain string (could be HTML or a URL).
 		}
-		$un = @unserialize( $trimmed );
+		$un = maybe_unserialize( $trimmed );
 		if ( false === $un && 'b:0;' !== $trimmed ) {
 			return $value; // Not actually serialized.
 		}

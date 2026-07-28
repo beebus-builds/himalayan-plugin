@@ -661,15 +661,26 @@ class ATF_Admin {
 		}
 
 		// Posts: content / meta / css / schema.
-		$posts = ATF_Content_Fixer::get_posts( 0, -1 );
 		$content = $meta = $css = $schema = 0;
-		foreach ( $posts as $pid ) {
-			$content += ATF_Content_Fixer::fix_post_scope( $pid, 'content', $fixer );
-			$meta    += ATF_Content_Fixer::fix_post_scope( $pid, 'meta', $fixer );
-			$css     += ATF_Content_Fixer::fix_post_scope( $pid, 'css', $fixer );
-			if ( ATF_Schema::post_needs_schema( $pid ) ) {
-				ATF_Schema::mark_batch( $pid, 1 );
-				$schema ++;
+		$batchSize = 100;
+		$offset = 0;
+		while ( true ) {
+			$posts = ATF_Content_Fixer::get_posts( $offset, $batchSize );
+			if ( empty( $posts ) ) {
+				break;
+			}
+			foreach ( $posts as $pid ) {
+				$content += ATF_Content_Fixer::fix_post_scope( $pid, 'content', $fixer );
+				$meta    += ATF_Content_Fixer::fix_post_scope( $pid, 'meta', $fixer );
+				$css     += ATF_Content_Fixer::fix_post_scope( $pid, 'css', $fixer );
+				if ( ATF_Schema::post_needs_schema( $pid ) ) {
+					update_post_meta( $pid, ATF_Schema::DONE_META, 1 );
+					$schema ++;
+				}
+			}
+			$offset += $batchSize;
+			if ( count( $posts ) < $batchSize ) {
+				break;
 			}
 		}
 
@@ -792,6 +803,10 @@ class ATF_Admin {
 			);
 		} elseif ( 'noupload' === $status ) {
 			printf( '<div class="notice notice-error is-dismissible"><p>%s</p></div>', esc_html__( 'No CSV file was uploaded.', 'alt-text-fixer' ) );
+		} elseif ( 'toolarge' === $status ) {
+			printf( '<div class="notice notice-error is-dismissible"><p>%s</p></div>', esc_html__( 'The uploaded file exceeds the maximum size (10MB).', 'alt-text-fixer' ) );
+		} elseif ( 'invalidtype' === $status ) {
+			printf( '<div class="notice notice-error is-dismissible"><p>%s</p></div>', esc_html__( 'The uploaded file is not a valid CSV file.', 'alt-text-fixer' ) );
 		} elseif ( 'parse' === $status ) {
 			printf( '<div class="notice notice-error is-dismissible"><p>%s</p></div>', esc_html__( 'Could not parse the CSV file.', 'alt-text-fixer' ) );
 		}
