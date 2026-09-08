@@ -2,8 +2,8 @@
 /**
  * Plugin Name: Himalayan Auto-Fixer — Alt Text & SEO Automation
  * Plugin URI:  https://github.com/beebus-builds/himalayan-plugin
- * Description: Multi-purpose automation for WordPress, including persistent image alt-text fixes, rendered front-end fixes, and optional AI Vision fallback for difficult images.
- * Version:     2.1.1
+ * Description: Multi-purpose automation for WordPress, including persistent image alt-text fixes, rendered front-end fixes, and free browser-local Florence-2 AI Vision fallback.
+ * Version:     2.2.0
  * Author:      Himalayan Auto-Fixer
  * Author URI:  https://github.com/beebus-builds/himalayan-plugin
  * License:     GPL-2.0-or-later
@@ -18,7 +18,7 @@ if ( ! defined( 'ATF_LOADED' ) ) {
 	define( 'ATF_LOADED', true );
 
 	if ( ! defined( 'ATF_VERSION' ) ) {
-		define( 'ATF_VERSION', '2.1.1' );
+		define( 'ATF_VERSION', '2.2.0' );
 		define( 'ATF_FILE', __FILE__ );
 		define( 'ATF_PATH', plugin_dir_path( __FILE__ ) );
 		define( 'ATF_URL', plugin_dir_url( __FILE__ ) );
