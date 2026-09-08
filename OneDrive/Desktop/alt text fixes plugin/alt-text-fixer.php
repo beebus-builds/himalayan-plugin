@@ -1,11 +1,11 @@
 <?php
 /**
  * Plugin Name: Himalayan Auto-Fixer — Alt Text & SEO Automation
- * Plugin URI:  https://github.com/example/himalayan-auto-fixer
- * Description: Multi-purpose automation for WordPress, straight from the roof of the world. Auto-fills missing image alt text everywhere (library, content, meta, CSS, widgets, customizer), auto-generates SEO meta titles/descriptions + social cards, imports client spreadsheets, audits theme files, and runs all fixes on a daily schedule.
- * Version:     2.0.0
+ * Plugin URI:  https://github.com/beebus-builds/himalayan-plugin
+ * Description: Multi-purpose automation for WordPress, including persistent image alt-text fixes and rendered front-end fixes for page-builder/theme output.
+ * Version:     2.1.0
  * Author:      Himalayan Auto-Fixer
- * Author URI:  https://github.com/example/himalayan-auto-fixer
+ * Author URI:  https://github.com/beebus-builds/himalayan-plugin
  * License:     GPL-2.0-or-later
  * Text Domain: alt-text-fixer
  */
@@ -18,7 +18,7 @@ if ( ! defined( 'ATF_LOADED' ) ) {
 	define( 'ATF_LOADED', true );
 
 	if ( ! defined( 'ATF_VERSION' ) ) {
-		define( 'ATF_VERSION', '2.0.0' );
+		define( 'ATF_VERSION', '2.1.0' );
 		define( 'ATF_FILE', __FILE__ );
 		define( 'ATF_PATH', plugin_dir_path( __FILE__ ) );
 		define( 'ATF_URL', plugin_dir_url( __FILE__ ) );
@@ -32,6 +32,7 @@ if ( ! defined( 'ATF_LOADED' ) ) {
 		'class-alt-text-fixer.php',
 		'class-atf-bulk-fixer.php',
 		'class-atf-content-fixer.php',
+		'class-atf-render-fixer.php',
 		'class-atf-seo.php',
 		'class-atf-audit.php',
 		'class-atf-import.php',
