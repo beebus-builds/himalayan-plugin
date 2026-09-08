@@ -4,8 +4,6 @@ import {
 	load_image,
 } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1';
 
-envSetup();
-
 const config = window.ATF_AI || {};
 const start = document.getElementById('atf-ai-start');
 const status = document.getElementById('atf-ai-status');
@@ -16,11 +14,6 @@ const MODEL_ID = config.model || 'onnx-community/Florence-2-base';
 
 if (start) {
 	start.addEventListener('click', run);
-}
-
-async function envSetup() {
-	// Transformers.js is imported from the browser bundle; model files are fetched
-	// from Hugging Face and can be cached by the browser for subsequent runs.
 }
 
 async function run() {
@@ -38,7 +31,7 @@ async function run() {
 			},
 			device: 'webgpu',
 		});
-		const processor = await (await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1')).AutoProcessor.from_pretrained(MODEL_ID);
+		const processor = await AutoProcessor.from_pretrained(MODEL_ID);
 		setStatus('Florence-2 ready. Images are being processed in this browser.');
 
 		let processed = 0;
@@ -63,10 +56,7 @@ async function run() {
 				const task = '<MORE_DETAILED_CAPTION>';
 				const prompts = processor.construct_prompts(task);
 				const inputs = await processor(image, prompts);
-				const generatedIds = await model.generate({
-					...inputs,
-					max_new_tokens: 80,
-				});
+				const generatedIds = await model.generate({ ...inputs, max_new_tokens: 80 });
 				const generatedText = processor.batch_decode(generatedIds, { skip_special_tokens: false })[0];
 				const result = processor.post_process_generation(generatedText, task, image.size);
 				const alt = cleanAlt(result && result[task] ? result[task] : generatedText);
