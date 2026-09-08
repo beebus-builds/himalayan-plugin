@@ -1,8 +1,4 @@
-import {
-	Florence2ForConditionalGeneration,
-	AutoProcessor,
-	load_image,
-} from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1';
+import { HimalayanAIVision } from './ai-vision-core.js';
 
 const config = window.ATF_AI || {};
 const start = document.getElementById('atf-ai-start');
@@ -17,66 +13,54 @@ if (start) {
 }
 
 async function run() {
+	if (!start) return;
 	start.disabled = true;
-	progress.style.display = 'block';
-	setStatus('Loading Florence-2 locally… the first run may download the model.');
+	if (progress) progress.style.display = 'block';
 
 	try {
-		const model = await Florence2ForConditionalGeneration.from_pretrained(MODEL_ID, {
-			dtype: {
-				embed_tokens: 'fp16',
-				vision_encoder: 'fp16',
-				encoder_model: 'q4',
-				decoder_model_merged: 'q4',
-			},
-			device: 'webgpu',
+		const ai = new HimalayanAIVision({
+			modelId: MODEL_ID,
+			onStatus: setStatus,
+			onProgress: setProgress,
 		});
-		const processor = await AutoProcessor.from_pretrained(MODEL_ID);
-		setStatus('Florence-2 ready. Images are being processed in this browser.');
 
-		let processed = 0;
-		while (true) {
-			const next = await post('atf_ai_next');
-			if (!next.success || next.data.finished) {
-				setProgress(processed, processed);
-				setStatus('Finished — all eligible images have been processed.');
-				break;
-			}
-
-			const id = next.data.id;
-			const imageResponse = await post('atf_ai_image', { id });
-			if (!imageResponse.success) {
-				processed++;
-				setProgress(processed, processed + 1);
-				continue;
-			}
-
-			try {
-				const image = await load_image(imageResponse.data.url);
-				const task = '<MORE_DETAILED_CAPTION>';
-				const prompts = processor.construct_prompts(task);
-				const inputs = await processor(image, prompts);
-				const generatedIds = await model.generate({ ...inputs, max_new_tokens: 80 });
-				const generatedText = processor.batch_decode(generatedIds, { skip_special_tokens: false })[0];
-				const result = processor.post_process_generation(generatedText, task, image.size);
-				const alt = cleanAlt(result && result[task] ? result[task] : generatedText);
-
-				if (alt) {
-					await post('atf_ai_save', { id, alt });
-				}
-			} catch (error) {
-				console.warn('Himalayan AI image failed:', id, error);
-			}
-
-			processed++;
-			setProgress(processed, processed + 1);
-		}
+		await ai.load();
+		await ai.process(createWordPressAdapter());
 	} catch (error) {
 		console.error('Himalayan AI Vision:', error);
-		setStatus('AI could not start: ' + (error && error.message ? error.message : 'unknown error') + '. WebGPU may be unavailable in this browser.');
+		setStatus('AI could not start: ' + (error && error.message ? error.message : 'unknown error'));
 	} finally {
 		start.disabled = false;
 	}
+}
+
+function createWordPressAdapter() {
+	return {
+		async next() {
+			const response = await post('atf_ai_next');
+			if (!response.success || response.data.finished) return null;
+			return response.data;
+		},
+
+		async getImage(item) {
+			const response = await post('atf_ai_image', { id: item.id });
+			if (!response.success) {
+				throw new Error(response.data || 'Image unavailable');
+			}
+			return response.data.url;
+		},
+
+		async saveAlt(item, alt) {
+			const response = await post('atf_ai_save', { id: item.id, alt });
+			if (!response.success) {
+				throw new Error(response.data || 'Could not save ALT text');
+			}
+		},
+
+		onError(item, error) {
+			console.warn('WordPress image skipped:', item && item.id, error);
+		},
+	};
 }
 
 async function post(action, data = {}) {
@@ -89,20 +73,6 @@ async function post(action, data = {}) {
 		credentials: 'same-origin',
 	});
 	return response.json();
-}
-
-function cleanAlt(value) {
-	let output = String(value || '')
-		.replace(/<[^>]+>/g, ' ')
-		.replace(/[\r\n\t]+/g, ' ')
-		.replace(/^(?:alt\s*text\s*:\s*)/i, '')
-		.replace(/^(?:the\s+image\s+(?:shows|depicts)\s+)/i, '')
-		.trim();
-	if (!output) return '';
-	if (output.length > 125) {
-		output = output.slice(0, 122).replace(/\s+\S*$/, '') + '...';
-	}
-	return output;
 }
 
 function setStatus(value) {
