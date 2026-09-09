@@ -10,6 +10,83 @@ class ATF_History {
 	const OPTION = 'atf_change_log';
 	const MAX    = 500;
 
+	private static function table() {
+		global $wpdb;
+		return $wpdb->prefix . 'atf_history';
+	}
+
+	public static function ensure_table() {
+		global $wpdb;
+		$table = self::table();
+		$charset = $wpdb->get_charset_collate();
+		$sql = "CREATE TABLE $table (
+			id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+			time BIGINT(20) UNSIGNED NOT NULL,
+			kind VARCHAR(32) NOT NULL,
+			object_id VARCHAR(191) NOT NULL,
+			meta_key VARCHAR(191) DEFAULT NULL,
+			before LONGTEXT NOT NULL,
+			after LONGTEXT NOT NULL,
+			user_id BIGINT(20) UNSIGNED NOT NULL DEFAULT 0,
+			source VARCHAR(32) DEFAULT NULL,
+			extra LONGTEXT DEFAULT NULL,
+			reverted TINYINT(1) NOT NULL DEFAULT 0,
+			reverted_time BIGINT(20) UNSIGNED DEFAULT NULL,
+			PRIMARY KEY  (id),
+			KEY kind_time (kind, time),
+			KEY object_id (object_id)
+		) $charset;";
+		require_once ABSPATH . 'wp-admin/includes/upgrade.php';
+		dbDelta( $sql );
+		self::migrate_from_option();
+	}
+
+	public static function migrate_from_option() {
+		global $wpdb;
+		$table = self::table();
+		$exists = $wpdb->get_var( $wpdb->prepare( "SHOW TABLES LIKE %s", $table ) );
+		if ( ! $exists ) {
+			return;
+		}
+		$count = (int) $wpdb->get_var( "SELECT COUNT(*) FROM $table" );
+		if ( $count > 0 ) {
+			return;
+		}
+		$logs = get_option( self::OPTION, array() );
+		if ( ! is_array( $logs ) || empty( $logs ) ) {
+			return;
+		}
+		foreach ( $logs as $e ) {
+			if ( empty( $e['id'] ) ) {
+				continue;
+			}
+			$extra = isset( $e['extra'] ) && is_array( $e['extra'] ) ? $e['extra'] : array();
+			$meta_key = '';
+			if ( isset( $extra['meta_key'] ) ) {
+				$meta_key = sanitize_text_field( (string) $extra['meta_key'] );
+			}
+			$source = isset( $extra['source'] ) ? sanitize_text_field( (string) $extra['source'] ) : null;
+			$wpdb->insert(
+				$table,
+				array(
+					'time'      => isset( $e['time'] ) ? (int) $e['time'] : time(),
+					'kind'      => isset( $e['kind'] ) ? sanitize_key( $e['kind'] ) : '',
+					'object_id' => isset( $e['object_id'] ) ? (string) $e['object_id'] : '',
+					'meta_key'  => $meta_key ?: null,
+					'before'    => isset( $e['before'] ) ? (string) $e['before'] : '',
+					'after'     => isset( $e['after'] )  ? (string) $e['after']  : '',
+					'user_id'   => isset( $e['user_id'] ) ? (int) $e['user_id'] : 0,
+					'source'    => $source,
+					'extra'     => wp_json_encode( $extra ),
+					'reverted'  => ! empty( $e['reverted'] ) ? 1 : 0,
+				),
+				array( '%d', '%s', '%s', '%s', '%s', '%s', '%d', '%s', '%s', '%d' )
+			);
+		}
+		// Optionally clear option after migration
+		// delete_option( self::OPTION );
+	}
+
 	/**
 	 * Log a change.
 	 *
@@ -26,28 +103,32 @@ class ATF_History {
 		if ( $before === $after ) {
 			return '';
 		}
-		$logs = get_option( self::OPTION, array() );
-		if ( ! is_array( $logs ) ) {
-			$logs = array();
+		global $wpdb;
+		self::ensure_table();
+		$table = self::table();
+		$extra = is_array( $extra ) ? $extra : array();
+		$meta_key = '';
+		if ( isset( $extra['meta_key'] ) ) {
+			$meta_key = sanitize_text_field( (string) $extra['meta_key'] );
 		}
-		$id = md5( $kind . '|' . (string) $object_id . '|' . microtime( true ) . '|' . wp_rand() );
-		array_unshift(
-			$logs,
+		$source = isset( $extra['source'] ) ? sanitize_text_field( (string) $extra['source'] ) : null;
+		$wpdb->insert(
+			$table,
 			array(
-				'id'        => $id,
 				'time'      => time(),
-				'user_id'   => get_current_user_id(),
 				'kind'      => sanitize_key( $kind ),
-				'object_id' => is_numeric( $object_id ) ? (int) $object_id : sanitize_text_field( (string) $object_id ),
+				'object_id' => is_numeric( $object_id ) ? (string) (int) $object_id : sanitize_text_field( (string) $object_id ),
+				'meta_key'  => $meta_key ?: null,
 				'before'    => $before,
 				'after'     => $after,
-				'extra'     => is_array( $extra ) ? $extra : array(),
-				'reverted'  => false,
-			)
+				'user_id'   => get_current_user_id(),
+				'source'    => $source,
+				'extra'     => wp_json_encode( $extra ),
+				'reverted'  => 0,
+			),
+			array( '%d', '%s', '%s', '%s', '%s', '%s', '%d', '%s', '%s', '%d' )
 		);
-		$logs = array_slice( $logs, 0, self::MAX );
-		update_option( self::OPTION, $logs, false );
-		return $id;
+		return $wpdb->insert_id ? (string) $wpdb->insert_id : '';
 	}
 
 	/**
@@ -58,28 +139,76 @@ class ATF_History {
 	 * @return array
 	 */
 	public static function get_all( $kind = 'all', $limit = 200 ) {
-		$logs = get_option( self::OPTION, array() );
-		if ( ! is_array( $logs ) ) {
+		global $wpdb;
+		self::ensure_table();
+		$table = self::table();
+		$limit = max( 1, intval( $limit ) );
+		$where = '';
+		$params = array();
+		if ( 'all' !== $kind ) {
+			$where = 'WHERE kind = %s';
+			$params[] = sanitize_key( $kind );
+		}
+		$sql = "SELECT * FROM $table $where ORDER BY time DESC LIMIT %d";
+		$params[] = $limit;
+		$rows = $wpdb->get_results( $wpdb->prepare( $sql, $params ), ARRAY_A );
+		if ( ! $rows ) {
 			return array();
 		}
-		if ( 'all' !== $kind ) {
-			$logs = array_filter(
-				$logs,
-				function ( $e ) use ( $kind ) {
-					return isset( $e['kind'] ) && $e['kind'] === $kind;
+		$out = array();
+		foreach ( $rows as $r ) {
+			$extra = array();
+			if ( ! empty( $r['extra'] ) ) {
+				$extra = json_decode( $r['extra'], true );
+				if ( ! is_array( $extra ) ) {
+					$extra = array();
 				}
+			}
+			$out[] = array(
+				'id'        => (string) $r['id'],
+				'time'      => (int) $r['time'],
+				'user_id'   => (int) $r['user_id'],
+				'kind'      => $r['kind'],
+				'object_id' => $r['object_id'],
+				'before'    => $r['before'],
+				'after'     => $r['after'],
+				'extra'     => $extra,
+				'reverted'  => (bool) $r['reverted'],
+				'meta_key'  => $r['meta_key'],
+				'source'    => $r['source'],
 			);
 		}
-		return array_slice( array_values( $logs ), 0, (int) $limit );
+		return $out;
 	}
 
 	public static function get_one( $id ) {
-		foreach ( self::get_all( 'all', self::MAX ) as $e ) {
-			if ( isset( $e['id'] ) && $e['id'] === $id ) {
-				return $e;
+		global $wpdb;
+		self::ensure_table();
+		$table = self::table();
+		$row = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM $table WHERE id = %d LIMIT 1", intval( $id ) ), ARRAY_A );
+		if ( ! $row ) {
+			return null;
+		}
+		$extra = array();
+		if ( ! empty( $row['extra'] ) ) {
+			$extra = json_decode( $row['extra'], true );
+			if ( ! is_array( $extra ) ) {
+				$extra = array();
 			}
 		}
-		return null;
+		return array(
+			'id'        => (string) $row['id'],
+			'time'      => (int) $row['time'],
+			'user_id'   => (int) $row['user_id'],
+			'kind'      => $row['kind'],
+			'object_id' => $row['object_id'],
+			'before'    => $row['before'],
+			'after'     => $row['after'],
+			'extra'     => $extra,
+			'reverted'  => (bool) $row['reverted'],
+			'meta_key'  => $row['meta_key'],
+			'source'    => $row['source'],
+		);
 	}
 
 	/**
@@ -161,18 +290,16 @@ class ATF_History {
 	 * @param string $id Log ID.
 	 */
 	public static function mark_reverted( $id ) {
-		$logs = get_option( self::OPTION, array() );
-		if ( ! is_array( $logs ) ) {
-			return;
-		}
-		foreach ( $logs as &$e ) {
-			if ( isset( $e['id'] ) && $e['id'] === $id ) {
-				$e['reverted'] = true;
-				break;
-			}
-		}
-		unset( $e );
-		update_option( self::OPTION, $logs, false );
+		global $wpdb;
+		self::ensure_table();
+		$table = self::table();
+		$wpdb->update(
+			$table,
+			array( 'reverted' => 1, 'reverted_time' => time() ),
+			array( 'id' => intval( $id ) ),
+			array( '%d', '%d' ),
+			array( '%d' )
+		);
 	}
 
 	/**
@@ -181,25 +308,19 @@ class ATF_History {
 	 * @param string $id Log ID.
 	 */
 	public static function delete( $id ) {
-		$logs = get_option( self::OPTION, array() );
-		if ( ! is_array( $logs ) ) {
-			return;
-		}
-		$logs = array_values(
-			array_filter(
-				$logs,
-				function ( $e ) use ( $id ) {
-					return ! isset( $e['id'] ) || $e['id'] !== $id;
-				}
-			)
-		);
-		update_option( self::OPTION, $logs, false );
+		global $wpdb;
+		self::ensure_table();
+		$table = self::table();
+		$wpdb->delete( $table, array( 'id' => intval( $id ) ), array( '%d' ) );
 	}
 
 	/**
 	 * Clear all logs.
 	 */
 	public static function clear_all() {
-		delete_option( self::OPTION );
+		global $wpdb;
+		self::ensure_table();
+		$table = self::table();
+		$wpdb->query( "TRUNCATE TABLE $table" );
 	}
 }

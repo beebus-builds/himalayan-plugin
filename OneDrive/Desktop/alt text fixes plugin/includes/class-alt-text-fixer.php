@@ -45,6 +45,9 @@ class Alt_Text_Fixer {
 				'auto_schedule'  => 'no',
 			)
 		);
+		if ( class_exists( 'ATF_History' ) ) {
+			ATF_History::ensure_table();
+		}
 	}
 
 	/**
