@@ -1,26 +1,25 @@
 <?php
 /**
  * Admin settings page under "Settings > Alt Text Fixer".
+ * Simplified for alt-text fixes only.
  */
 class ATF_Admin {
 
 	const CLIENT_ROLE = 'atf_client_developer';
 	const CAP         = 'atf_access';
 
-	/**
-	 * Initialise hooks.
-	 */
 	public static function init() {
 		add_action( 'admin_menu', array( __CLASS__, 'register_page' ) );
 		add_action( 'admin_init', array( __CLASS__, 'register_settings' ) );
 		add_action( 'admin_notices', array( __CLASS__, 'import_notice' ) );
 		add_action( 'wp_dashboard_setup', array( __CLASS__, 'dashboard_widget' ) );
-		add_action( 'wp_ajax_atf_run_all', array( __CLASS__, 'ajax_run_all' ) );
+		add_action( 'admin_bar_menu', array( __CLASS__, 'admin_bar_menu' ), 100 );
+		add_action( 'admin_post_atf_install_model', array( __CLASS__, 'handle_model_install' ) );
+		add_action( 'admin_post_atf_review_revert', array( __CLASS__, 'handle_review_revert' ) );
+		add_action( 'admin_post_atf_review_save', array( __CLASS__, 'handle_review_save' ) );
+		add_action( 'admin_post_atf_review_clear', array( __CLASS__, 'handle_review_clear' ) );
 	}
 
-	/**
-	 * Register the at-a-glance dashboard widget.
-	 */
 	public static function dashboard_widget() {
 		wp_add_dashboard_widget(
 			'atf_status_widget',
@@ -29,15 +28,12 @@ class ATF_Admin {
 		);
 	}
 
-	/**
-	 * Render the dashboard widget with remaining counts.
-	 */
 	public static function render_dashboard_widget() {
 		$summary = ATF_Cron::remaining_summary();
 		$total   = array_sum( $summary );
 		echo '<p>';
 		if ( 0 === $total ) {
-			echo '<span class="atf-ok">' . esc_html__( 'All caught up — no missing alt text or SEO meta.', 'alt-text-fixer' ) . '</span>';
+			echo '<span class="atf-ok">' . esc_html__( 'All caught up — no missing alt text.', 'alt-text-fixer' ) . '</span>';
 		} else {
 			echo esc_html__( 'Remaining items to fix:', 'alt-text-fixer' );
 		}
@@ -50,8 +46,6 @@ class ATF_Admin {
 				'meta'    => esc_html__( 'In post meta', 'alt-text-fixer' ),
 				'css'     => esc_html__( 'CSS background images', 'alt-text-fixer' ),
 				'global'  => esc_html__( 'Widgets / customizer', 'alt-text-fixer' ),
-				'seo'     => esc_html__( 'SEO meta', 'alt-text-fixer' ),
-				'schema'  => esc_html__( 'Schema', 'alt-text-fixer' ),
 			);
 			foreach ( $summary as $key => $count ) {
 				printf(
@@ -61,52 +55,59 @@ class ATF_Admin {
 				);
 			}
 			echo '</ul>';
-			printf(
-				'<p><a class="button" href="%s">%s</a></p>',
-				esc_url( admin_url( 'admin.php?page=alt-text-fixer' ) ),
-				esc_html__( 'Open Alt Text Fixer', 'alt-text-fixer' )
-			);
 		}
 	}
 
-	/**
-	 * Capability required to access the plugin dashboard.
-	 *
-	 * Defaults to 'manage_options' (Administrators). Can be lowered via the
-	 * "Access capability" setting so a custom "Client Developer" role can be
-	 * granted access without full Admin rights.
-	 *
-	 * @return string
-	 */
+	public static function admin_bar_menu( $wp_admin_bar ) {
+		if ( ! current_user_can( self::capability() ) ) {
+			return;
+		}
+		$summary = ATF_Cron::remaining_summary();
+		$total   = array_sum( $summary );
+		$title   = esc_html__( 'Himalayan Auto-Fixer', 'alt-text-fixer' );
+		if ( $total > 0 ) {
+			$title .= ' <span class="ab-item-count">' . (int) $total . '</span>';
+		}
+		$wp_admin_bar->add_node( array(
+			'id'    => 'atf-admin-bar',
+			'title' => $title,
+			'href'  => admin_url( 'admin.php?page=alt-text-fixer' ),
+		) );
+		$wp_admin_bar->add_node( array(
+			'id'     => 'atf-dashboard',
+			'parent' => 'atf-admin-bar',
+			'title'  => esc_html__( 'Dashboard', 'alt-text-fixer' ),
+			'href'   => admin_url( 'admin.php?page=alt-text-fixer' ),
+		) );
+		$wp_admin_bar->add_node( array(
+			'id'     => 'atf-settings',
+			'parent' => 'atf-admin-bar',
+			'title'  => esc_html__( 'Settings', 'alt-text-fixer' ),
+			'href'   => admin_url( 'admin.php?page=alt-text-fixer-settings' ),
+		) );
+		$wp_admin_bar->add_node( array(
+			'id'     => 'atf-media',
+			'parent' => 'atf-admin-bar',
+			'title'  => esc_html__( 'Media Library', 'alt-text-fixer' ),
+			'href'   => admin_url( 'upload.php' ),
+		) );
+	}
+
 	public static function capability() {
 		$opts = get_option( 'atf_settings', array() );
 		$cap  = isset( $opts['access_cap'] ) ? $opts['access_cap'] : 'manage_options';
 		return self::is_valid_cap( $cap ) ? $cap : 'manage_options';
 	}
 
-	/**
-	 * Whether a capability string is known to WordPress.
-	 *
-	 * @param string $cap Capability.
-	 * @return bool
-	 */
 	public static function is_valid_cap( $cap ) {
 		$valid = array(
 			'manage_options', 'manage_categories', 'edit_others_posts',
 			'edit_posts', 'publish_posts', 'upload_files', 'edit_pages',
-			'manage_woocommerce', 'install_plugins', 'activate_plugins',
 			self::CAP,
 		);
 		return in_array( $cap, $valid, true );
 	}
 
-	/**
-	 * Create the Client Developer role with the dedicated capability.
-	 *
-	 * Called on plugin activation and when the access setting is saved.
-	 * The role always gets the plugin's custom capability (atf_access);
-	 * the admin chooses the minimum requirement in the settings dropdown.
-	 */
 	public static function sync_role() {
 		$role = get_role( self::CLIENT_ROLE );
 		if ( $role ) {
@@ -120,16 +121,10 @@ class ATF_Admin {
 		);
 	}
 
-	/**
-	 * Remove the Client Developer role (on deactivation).
-	 */
 	public static function remove_role() {
 		remove_role( self::CLIENT_ROLE );
 	}
 
-	/**
-	 * Register the top-level plugin menu with a dedicated dashboard.
-	 */
 	public static function register_page() {
 		$cap = self::capability();
 		add_menu_page(
@@ -157,26 +152,39 @@ class ATF_Admin {
 			'alt-text-fixer-settings',
 			array( __CLASS__, 'render_page' )
 		);
+		add_submenu_page(
+			'alt-text-fixer',
+			esc_html__( 'Redirect CSV Import', 'alt-text-fixer' ),
+			esc_html__( 'Redirect CSV Import', 'alt-text-fixer' ),
+			$cap,
+			'alt-text-fixer-redirects',
+			array( __CLASS__, 'render_redirect_import' )
+		);
+		add_submenu_page(
+			'alt-text-fixer',
+			esc_html__( 'Model Installer', 'alt-text-fixer' ),
+			esc_html__( 'Model Installer', 'alt-text-fixer' ),
+			$cap,
+			'alt-text-fixer-model',
+			array( __CLASS__, 'render_model_installer' )
+		);
+		add_submenu_page(
+			'alt-text-fixer',
+			esc_html__( 'Review Changes', 'alt-text-fixer' ),
+			esc_html__( 'Review Changes', 'alt-text-fixer' ),
+			$cap,
+			'alt-text-fixer-review',
+			array( __CLASS__, 'render_review_page' )
+		);
 	}
 
-	/**
-	 * Register the plugin settings.
-	 */
 	public static function register_settings() {
 		register_setting( 'atf_settings_group', 'atf_settings', array( __CLASS__, 'sanitize' ) );
 
 		add_settings_section(
-			'atf_main_actions',
-			esc_html__( 'Bulk Actions', 'alt-text-fixer' ),
+			'atf_main',
+			esc_html__( 'Main Settings', 'alt-text-fixer' ),
 			'__return_false',
-			'alt-text-fixer'
-		);
-
-		add_settings_field(
-			'dry_run',
-			esc_html__( 'Dry Run Mode', 'alt-text-fixer' ),
-			array( __CLASS__, 'field_dry_run' ),
-			'atf_main_actions',
 			'alt-text-fixer'
 		);
 
@@ -222,252 +230,15 @@ class ATF_Admin {
 			'alt-text-fixer',
 			'atf_main'
 		);
-
-		// SEO settings.
-		register_setting( 'atf_settings_group', 'atf_seo_settings', array( __CLASS__, 'sanitize_seo' ) );
-
-		add_settings_section(
-			'atf_seo',
-			esc_html__( 'SEO Automation', 'alt-text-fixer' ),
-			'__return_false',
-			'alt-text-fixer'
-		);
-
-		add_settings_field( 'seo_enabled', esc_html__( 'Enable SEO automation', 'alt-text-fixer' ), array( __CLASS__, 'field_seo_enabled' ), 'alt-text-fixer', 'atf_seo' );
-		add_settings_field( 'seo_auto_on_save', esc_html__( 'Auto-generate on save', 'alt-text-fixer' ), array( __CLASS__, 'field_seo_auto_on_save' ), 'alt-text-fixer', 'atf_seo' );
-		add_settings_field( 'seo_title_tpl', esc_html__( 'Title template', 'alt-text-fixer' ), array( __CLASS__, 'field_seo_title_tpl' ), 'alt-text-fixer', 'atf_seo' );
-		add_settings_field( 'seo_desc_tpl', esc_html__( 'Description template', 'alt-text-fixer' ), array( __CLASS__, 'field_seo_desc_tpl' ), 'alt-text-fixer', 'atf_seo' );
-		add_settings_field( 'seo_sep', esc_html__( 'Separator', 'alt-text-fixer' ), array( __CLASS__, 'field_seo_sep' ), 'alt-text-fixer', 'atf_seo' );
-		add_settings_field( 'seo_desc_length', esc_html__( 'Description length', 'alt-text-fixer' ), array( __CLASS__, 'field_seo_desc_length' ), 'alt-text-fixer', 'atf_seo' );
-
-		// Schema / structured data settings.
-		register_setting( 'atf_settings_group', 'atf_schema_org', array( __CLASS__, 'sanitize_schema' ) );
-
-		add_settings_section(
-			'atf_schema',
-			esc_html__( 'Schema / Structured data', 'alt-text-fixer' ),
-			'__return_false',
-			'alt-text-fixer'
-		);
-
-		add_settings_field( 'schema_enabled', esc_html__( 'Enable site schema', 'alt-text-fixer' ), array( __CLASS__, 'field_schema_enabled' ), 'alt-text-fixer', 'atf_schema' );
-		add_settings_field( 'schema_type', esc_html__( 'Business / organization type', 'alt-text-fixer' ), array( __CLASS__, 'field_schema_type' ), 'alt-text-fixer', 'atf_schema' );
-		add_settings_field( 'schema_name', esc_html__( 'Name', 'alt-text-fixer' ), array( __CLASS__, 'field_schema_name' ), 'alt-text-fixer', 'atf_schema' );
-		add_settings_field( 'schema_logo', esc_html__( 'Logo URL', 'alt-text-fixer' ), array( __CLASS__, 'field_schema_logo' ), 'alt-text-fixer', 'atf_schema' );
-		add_settings_field( 'schema_phone', esc_html__( 'Phone', 'alt-text-fixer' ), array( __CLASS__, 'field_schema_phone' ), 'alt-text-fixer', 'atf_schema' );
-		add_settings_field( 'schema_email', esc_html__( 'Email', 'alt-text-fixer' ), array( __CLASS__, 'field_schema_email' ), 'alt-text-fixer', 'atf_schema' );
-		add_settings_field( 'schema_address', esc_html__( 'Street address', 'alt-text-fixer' ), array( __CLASS__, 'field_schema_address' ), 'alt-text-fixer', 'atf_schema' );
-		add_settings_field( 'schema_city', esc_html__( 'City', 'alt-text-fixer' ), array( __CLASS__, 'field_schema_city' ), 'alt-text-fixer', 'atf_schema' );
-		add_settings_field( 'schema_region', esc_html__( 'State / Region', 'alt-text-fixer' ), array( __CLASS__, 'field_schema_region' ), 'alt-text-fixer', 'atf_schema' );
-		add_settings_field( 'schema_postal', esc_html__( 'Postal code', 'alt-text-fixer' ), array( __CLASS__, 'field_schema_postal' ), 'alt-text-fixer', 'atf_schema' );
-		add_settings_field( 'schema_country', esc_html__( 'Country (ISO)', 'alt-text-fixer' ), array( __CLASS__, 'field_schema_country' ), 'alt-text-fixer', 'atf_schema' );
-		add_settings_field( 'schema_geo', esc_html__( 'Geo coordinates', 'alt-text-fixer' ), array( __CLASS__, 'field_schema_geo' ), 'alt-text-fixer', 'atf_schema' );
-		add_settings_field( 'schema_hours', esc_html__( 'Opening hours', 'alt-text-fixer' ), array( __CLASS__, 'field_schema_hours' ), 'alt-text-fixer', 'atf_schema' );
-		add_settings_field( 'schema_sameas', esc_html__( 'SameAs profiles', 'alt-text-fixer' ), array( __CLASS__, 'field_schema_sameas' ), 'alt-text-fixer', 'atf_schema' );
-		add_settings_field( 'schema_medical', esc_html__( 'Medical specialties', 'alt-text-fixer' ), array( __CLASS__, 'field_schema_medical' ), 'alt-text-fixer', 'atf_schema' );
-	}
-
-	/**
-	 * Sanitize schema org settings.
-	 *
-	 * @param array $input Raw input.
-	 * @return array
-	 */
-	public static function sanitize_schema( $input ) {
-		$d = ATF_Schema::org_defaults();
-		$medical = array();
-		if ( ! empty( $input['medical'] ) && is_array( $input['medical'] ) ) {
-			$medical = array_map( 'sanitize_text_field', $input['medical'] );
-		}
-		return array(
-			'type'        => sanitize_text_field( $input['type'] ?? $d['type'] ),
-			'name'        => sanitize_text_field( $input['name'] ?? $d['name'] ),
-			'enabled'     => ! empty( $input['enabled'] ) ? 'yes' : 'no',
-			'description' => sanitize_text_field( $input['description'] ?? '' ),
-			'url'         => esc_url_raw( $input['url'] ?? $d['url'] ),
-			'logo'        => esc_url_raw( $input['logo'] ?? '' ),
-			'image'       => esc_url_raw( $input['image'] ?? '' ),
-			'phone'       => sanitize_text_field( $input['phone'] ?? '' ),
-			'email'       => sanitize_email( $input['email'] ?? '' ),
-			'address'     => sanitize_text_field( $input['address'] ?? '' ),
-			'city'        => sanitize_text_field( $input['city'] ?? '' ),
-			'region'      => sanitize_text_field( $input['region'] ?? '' ),
-			'postal'      => sanitize_text_field( $input['postal'] ?? '' ),
-			'country'     => sanitize_text_field( $input['country'] ?? '' ),
-			'priceRange'  => sanitize_text_field( $input['priceRange'] ?? '' ),
-			'geo'         => sanitize_text_field( $input['geo'] ?? '' ),
-			'hours'       => sanitize_textarea_field( $input['hours'] ?? '' ),
-			'sameAs'      => sanitize_textarea_field( $input['sameAs'] ?? '' ),
-			'medical'     => $medical,
+		add_settings_field(
+			'dashboard_limit',
+			esc_html__( 'Dashboard list limit', 'alt-text-fixer' ),
+			array( __CLASS__, 'field_dashboard_limit' ),
+			'alt-text-fixer',
+			'atf_main'
 		);
 	}
 
-	public static function field_schema_enabled() {
-		$s = ATF_Schema::get_org_settings();
-		printf( '<label><input type="checkbox" name="atf_schema_org[enabled]" value="yes" %s> %s</label>', checked( 'yes', $s['enabled'], false ), esc_html__( 'Output Organization / LocalBusiness / MedicalBusiness JSON-LD site-wide.', 'alt-text-fixer' ) );
-	}
-
-	public static function field_schema_type() {
-		$s = ATF_Schema::get_org_settings();
-		$types = array( 'Organization', 'LocalBusiness', 'MedicalBusiness', 'ProfessionalService', 'Store', 'Restaurant' );
-		echo '<select name="atf_schema_org[type]">';
-		foreach ( $types as $t ) {
-			printf( '<option value="%s" %s>%s</option>', esc_attr( $t ), selected( $t, $s['type'], false ), esc_html( $t ) );
-		}
-		echo '</select> <span class="description">' . esc_html__( 'Choose MedicalBusiness for clinics/hospitals; LocalBusiness for local shops.', 'alt-text-fixer' ) . '</span>';
-	}
-
-	public static function field_schema_name() {
-		$s = ATF_Schema::get_org_settings();
-		printf( '<input type="text" class="regular-text" name="atf_schema_org[name]" value="%s">', esc_attr( $s['name'] ) );
-	}
-
-	public static function field_schema_logo() {
-		$s = ATF_Schema::get_org_settings();
-		printf( '<input type="url" class="regular-text" name="atf_schema_org[logo]" value="%s">', esc_attr( $s['logo'] ) );
-	}
-
-	public static function field_schema_phone() {
-		$s = ATF_Schema::get_org_settings();
-		printf( '<input type="text" class="regular-text" name="atf_schema_org[phone]" value="%s">', esc_attr( $s['phone'] ) );
-	}
-
-	public static function field_schema_email() {
-		$s = ATF_Schema::get_org_settings();
-		printf( '<input type="email" class="regular-text" name="atf_schema_org[email]" value="%s">', esc_attr( $s['email'] ) );
-	}
-
-	public static function field_schema_address() {
-		$s = ATF_Schema::get_org_settings();
-		printf( '<input type="text" class="regular-text" name="atf_schema_org[address]" value="%s">', esc_attr( $s['address'] ) );
-	}
-
-	public static function field_schema_city() {
-		$s = ATF_Schema::get_org_settings();
-		printf( '<input type="text" name="atf_schema_org[city]" value="%s">', esc_attr( $s['city'] ) );
-	}
-
-	public static function field_schema_region() {
-		$s = ATF_Schema::get_org_settings();
-		printf( '<input type="text" name="atf_schema_org[region]" value="%s">', esc_attr( $s['region'] ) );
-	}
-
-	public static function field_schema_postal() {
-		$s = ATF_Schema::get_org_settings();
-		printf( '<input type="text" name="atf_schema_org[postal]" value="%s">', esc_attr( $s['postal'] ) );
-	}
-
-	public static function field_schema_country() {
-		$s = ATF_Schema::get_org_settings();
-		printf( '<input type="text" name="atf_schema_org[country]" value="%s" placeholder="US">', esc_attr( $s['country'] ) );
-	}
-
-	public static function field_schema_geo() {
-		$s = ATF_Schema::get_org_settings();
-		printf( '<input type="text" class="regular-text" name="atf_schema_org[geo]" value="%s"><br><span class="description">%s</span>', esc_attr( $s['geo'] ), esc_html__( 'Latitude,longitude (e.g. 27.7172,85.3240).', 'alt-text-fixer' ) );
-	}
-
-	public static function field_schema_hours() {
-		$s = ATF_Schema::get_org_settings();
-		printf( '<textarea class="large-text" name="atf_schema_org[hours]" rows="2">%s</textarea><br><span class="description">%s</span>', esc_textarea( $s['hours'] ), esc_html__( 'One per line, e.g. "Mon-Fri 09:00-17:00".', 'alt-text-fixer' ) );
-	}
-
-	public static function field_schema_sameas() {
-		$s = ATF_Schema::get_org_settings();
-		printf( '<textarea class="large-text" name="atf_schema_org[sameAs]" rows="2">%s</textarea><br><span class="description">%s</span>', esc_textarea( $s['sameAs'] ), esc_html__( 'Social/profile URLs, one per line.', 'alt-text-fixer' ) );
-	}
-
-	public static function field_schema_medical() {
-		$s = ATF_Schema::get_org_settings();
-		$current = ! empty( $s['medical'] ) && is_array( $s['medical'] ) ? $s['medical'] : array();
-		$options = array( 'Cardiology', 'Dentistry', 'Dermatology', 'Gynecology', 'Pediatrics', 'Psychiatry', 'Surgery', 'Ophthalmology', 'Orthopedic', 'Oncology' );
-		echo '<select name="atf_schema_org[medical][]" multiple size="6">';
-		foreach ( $options as $o ) {
-			$sel = in_array( $o, $current, true ) ? 'selected' : '';
-			printf( '<option value="%s" %s>%s</option>', esc_attr( $o ), $sel, esc_html( $o ) );
-		}
-		echo '</select> <span class="description">' . esc_html__( 'Only used when type is MedicalBusiness.', 'alt-text-fixer' ) . '</span>';
-	}
-
-	/**
-	 * Sanitize SEO settings.
-	 *
-	 * @param array $input Raw input.
-	 * @return array
-	 */
-	public static function sanitize_seo( $input ) {
-		$d = ATF_SEO::defaults();
-		return array(
-			'enabled'       => ! empty( $input['enabled'] ) ? 'yes' : 'no',
-			'auto_on_save'  => ! empty( $input['auto_on_save'] ) ? 'yes' : 'no',
-			'title_tpl'     => sanitize_text_field( $input['title_tpl'] ?? $d['title_tpl'] ),
-			'desc_tpl'      => sanitize_text_field( $input['desc_tpl'] ?? $d['desc_tpl'] ),
-			'sep'           => sanitize_text_field( $input['sep'] ?? $d['sep'] ),
-			'desc_length'   => max( 0, (int) ( $input['desc_length'] ?? $d['desc_length'] ) ),
-			'fallback_desc' => sanitize_text_field( $input['fallback_desc'] ?? '' ),
-		);
-	}
-
-	public static function field_seo_enabled() {
-		$s = ATF_SEO::get_settings();
-		printf( '<label><input type="checkbox" name="atf_seo_settings[enabled]" value="yes" %s> %s</label>', checked( 'yes', $s['enabled'], false ), esc_html__( 'Output generated meta title & description in the page head.', 'alt-text-fixer' ) );
-	}
-
-	public static function field_seo_auto_on_save() {
-		$s = ATF_SEO::get_settings();
-		printf( '<label><input type="checkbox" name="atf_seo_settings[auto_on_save]" value="yes" %s> %s</label>', checked( 'yes', $s['auto_on_save'], false ), esc_html__( 'Generate SEO meta automatically when a post is saved.', 'alt-text-fixer' ) );
-	}
-
-	public static function field_seo_title_tpl() {
-		$s = ATF_SEO::get_settings();
-		printf( '<input type="text" class="regular-text" name="atf_seo_settings[title_tpl]" value="%s"><br><span class="description">%s</span>', esc_attr( $s['title_tpl'] ), esc_html__( 'Tokens: %title% %sitename% %sep% %category%', 'alt-text-fixer' ) );
-	}
-
-	public static function field_seo_desc_tpl() {
-		$s = ATF_SEO::get_settings();
-		printf( '<input type="text" class="regular-text" name="atf_seo_settings[desc_tpl]" value="%s"><br><span class="description">%s</span>', esc_attr( $s['desc_tpl'] ), esc_html__( 'Tokens: %excerpt% %title% %sitename% %sep% %category%', 'alt-text-fixer' ) );
-	}
-
-	public static function field_seo_sep() {
-		$s = ATF_SEO::get_settings();
-		printf( '<input type="text" name="atf_seo_settings[sep]" value="%s" class="small-text">', esc_attr( $s['sep'] ) );
-	}
-
-	public static function field_seo_desc_length() {
-		$s = ATF_SEO::get_settings();
-		printf( '<input type="number" name="atf_seo_settings[desc_length]" value="%d" min="0" max="320" class="small-text"> <span class="description">%s</span>', (int) $s['desc_length'], esc_html__( 'Max characters (0 = no limit).', 'alt-text-fixer' ) );
-	}
-
-	/**
-	 * Sanitize settings input.
-	 *
-	 * @param array $input Raw input.
-	 * @return array
-	 */
-	public static function sanitize( $input ) {
-		$auto_schedule = ! empty( $input['auto_schedule'] ) ? 'yes' : 'no';
-		// Keep the cron schedule in sync with the setting.
-		ATF_Cron::set_schedule( 'yes' === $auto_schedule );
-		$access_cap = isset( $input['access_cap'] ) ? sanitize_key( $input['access_cap'] ) : 'manage_options';
-		if ( ! self::is_valid_cap( $access_cap ) ) {
-			$access_cap = 'manage_options';
-		}
-		// Keep the custom role in sync with the chosen capability.
-		self::sync_role();
-		$exclusions = isset( $input['exclusions'] ) ? sanitize_text_field( $input['exclusions'] ) : '';
-		return array(
-			'auto_on_upload' => ! empty( $input['auto_on_upload'] ) ? 'yes' : 'no',
-			'source'         => in_array( $input['source'], array( 'title', 'filename' ), true ) ? $input['source'] : 'title',
-			'append_site'    => ! empty( $input['append_site'] ) ? 'yes' : 'no',
-			'auto_schedule'  => $auto_schedule,
-			'access_cap'     => $access_cap,
-			'exclusions'     => $exclusions,
-		);
-	}
-
-	/**
-	 * Field: auto on upload.
-	 */
 	public static function field_auto_on_upload() {
 		$opts = get_option( 'atf_settings', array() );
 		$val  = isset( $opts['auto_on_upload'] ) ? $opts['auto_on_upload'] : 'yes';
@@ -478,9 +249,6 @@ class ATF_Admin {
 		);
 	}
 
-	/**
-	 * Field: source.
-	 */
 	public static function field_source() {
 		$opts = get_option( 'atf_settings', array() );
 		$val  = isset( $opts['source'] ) ? $opts['source'] : 'title';
@@ -492,9 +260,6 @@ class ATF_Admin {
 		<?php
 	}
 
-	/**
-	 * Field: append site name.
-	 */
 	public static function field_append_site() {
 		$opts = get_option( 'atf_settings', array() );
 		$val  = isset( $opts['append_site'] ) ? $opts['append_site'] : 'no';
@@ -505,22 +270,16 @@ class ATF_Admin {
 		);
 	}
 
-	/**
-	 * Field: daily auto-fix schedule.
-	 */
 	public static function field_auto_schedule() {
 		$opts = get_option( 'atf_settings', array() );
 		$val  = isset( $opts['auto_schedule'] ) ? $opts['auto_schedule'] : 'no';
 		printf(
 			'<label><input type="checkbox" name="atf_settings[auto_schedule]" value="yes" %s> %s</label>',
 			checked( 'yes', $val, false ),
-			esc_html__( 'Automatically fix new missing alt text and generate SEO meta every day (WP-Cron).', 'alt-text-fixer' )
+			esc_html__( 'Automatically fix new missing alt text every day (WP-Cron).', 'alt-text-fixer' )
 		);
 	}
 
-	/**
-	 * Field: exclusions.
-	 */
 	public static function field_exclusions() {
 		$opts = get_option( 'atf_settings', array() );
 		$val  = isset( $opts['exclusions'] ) ? $opts['exclusions'] : '';
@@ -531,9 +290,16 @@ class ATF_Admin {
 		);
 	}
 
-	/**
-	 * Field: access capability.
-	 */
+	public static function field_dashboard_limit() {
+		$opts = get_option( 'atf_settings', array() );
+		$val  = isset( $opts['dashboard_limit'] ) ? absint( $opts['dashboard_limit'] ) : 100;
+		printf(
+			'<input type="number" min="1" max="500" name="atf_settings[dashboard_limit]" value="%d" class="small-text"> <span class="description">%s</span>',
+			$val,
+			esc_html__( 'Number of missing media items to show on the dashboard. Max 500.', 'alt-text-fixer' )
+		);
+	}
+
 	public static function field_access_cap() {
 		$opts = get_option( 'atf_settings', array() );
 		$val  = isset( $opts['access_cap'] ) ? $opts['access_cap'] : 'manage_options';
@@ -544,25 +310,18 @@ class ATF_Admin {
 			'publish_posts'     => esc_html__( 'Author (publish_posts)', 'alt-text-fixer' ),
 			'edit_posts'        => esc_html__( 'Contributor (edit_posts)', 'alt-text-fixer' ),
 			'upload_files'      => esc_html__( 'Uploader (upload_files)', 'alt-text-fixer' ),
-			'manage_woocommerce'=> esc_html__( 'Shop Manager (manage_woocommerce)', 'alt-text-fixer' ),
 			self::CAP           => esc_html__( 'Client Developer (custom role)', 'alt-text-fixer' ),
 		);
 		echo '<select name="atf_settings[access_cap]">';
 		foreach ( $caps as $c => $label ) {
 			printf( '<option value="%s" %s>%s</option>', esc_attr( $c ), selected( $c, $val, false ), esc_html( $label ) );
 		}
-		echo '</select><br><span class="description">' . esc_html__( 'Minimum capability needed to see the Himalayan Auto-Fixer menu. Choose "Client Developer" to use the auto-created role. Lower the cap for an existing role (e.g. Editor) to let your client\'s developer use the dashboard without full Admin access. The role will be created on plugin activation.', 'alt-text-fixer' ) . '</span>';
+		echo '</select><br><span class="description">' . esc_html__( 'Minimum capability needed to see the Himalayan Auto-Fixer menu. Choose "Client Developer" to use the auto-created role.', 'alt-text-fixer' ) . '</span>';
 	}
 
-	/**
-	 * Render the dedicated plugin dashboard (top-level landing page).
-	 */
 	public static function render_dashboard() {
 		$summary = ATF_Cron::remaining_summary();
-		$audit   = ATF_Tech_Audit::run();
-		$pass    = count( array_filter( $audit, function ( $c ) { return 'pass' === $c['status']; } ) );
-		$warn    = count( array_filter( $audit, function ( $c ) { return 'warn' === $c['status']; } ) );
-		$fail    = count( array_filter( $audit, function ( $c ) { return 'fail' === $c['status']; } ) );
+		$total   = array_sum( $summary );
 
 		wp_enqueue_script( 'atf-bulk', ATF_URL . 'assets/bulk.js', array( 'jquery' ), ATF_VERSION, true );
 		wp_localize_script(
@@ -576,7 +335,7 @@ class ATF_Admin {
 		?>
 		<div class="wrap atf-dashboard">
 			<h1><?php esc_html_e( 'Himalayan Auto-Fixer', 'alt-text-fixer' ); ?></h1>
-			<p class="description"><?php esc_html_e( 'All-in-one accessibility & technical SEO automation. This dashboard is for the site developer/administrator.', 'alt-text-fixer' ); ?></p>
+			<p class="description"><?php esc_html_e( 'Alt text automation for WordPress. This dashboard is for the site developer/administrator.', 'alt-text-fixer' ); ?></p>
 
 			<div class="atf-dash-grid">
 				<div class="atf-dash-card">
@@ -584,29 +343,6 @@ class ATF_Admin {
 					<div class="atf-dash-num"><?php echo (int) array_sum( array( $summary['library'], $summary['content'], $summary['meta'], $summary['css'], $summary['global'] ) ); ?></div>
 					<p><?php esc_html_e( 'items still need fixing', 'alt-text-fixer' ); ?></p>
 					<a class="button button-primary" href="<?php echo esc_url( admin_url( 'admin.php?page=alt-text-fixer-settings' ) ); ?>"><?php esc_html_e( 'Open fixers', 'alt-text-fixer' ); ?></a>
-				</div>
-				<div class="atf-dash-card">
-					<h2><?php esc_html_e( 'SEO meta', 'alt-text-fixer' ); ?></h2>
-					<div class="atf-dash-num"><?php echo (int) $summary['seo']; ?></div>
-					<p><?php esc_html_e( 'posts missing meta', 'alt-text-fixer' ); ?></p>
-					<a class="button button-primary" href="<?php echo esc_url( admin_url( 'admin.php?page=alt-text-fixer-settings' ) ); ?>"><?php esc_html_e( 'Generate', 'alt-text-fixer' ); ?></a>
-				</div>
-				<div class="atf-dash-card">
-					<h2><?php esc_html_e( 'Schema', 'alt-text-fixer' ); ?></h2>
-					<div class="atf-dash-num"><?php echo (int) $summary['schema']; ?></div>
-					<p><?php esc_html_e( 'posts eligible for schema', 'alt-text-fixer' ); ?></p>
-					<a class="button button-primary" href="<?php echo esc_url( admin_url( 'admin.php?page=alt-text-fixer-settings' ) ); ?>"><?php esc_html_e( 'Configure', 'alt-text-fixer' ); ?></a>
-				</div>
-				<div class="atf-dash-card">
-					<h2><?php esc_html_e( 'Technical audit', 'alt-text-fixer' ); ?></h2>
-					<div class="atf-dash-num atf-ok"><?php echo (int) $pass; ?></div>
-					<p>
-						<span class="atf-ok"><?php echo (int) $pass; ?> OK</span> /
-						<span class="atf-warn"><?php echo (int) $warn; ?> warn</span> /
-						<span class="atf-missing"><?php echo (int) $fail; ?> fail</span>
-					</p>
-					<button type="button" id="atf-tech-audit" class="button button-secondary"><?php esc_html_e( 'Run audit', 'alt-text-fixer' ); ?></button>
-					<span class="spinner atf-spinner" data-target="tech"></span>
 				</div>
 			</div>
 
@@ -617,9 +353,39 @@ class ATF_Admin {
 				<span id="atf-run-all-status" class="description"></span>
 			</p>
 			<p>
-				<a class="button" href="<?php echo esc_url( admin_url( 'admin.php?page=alt-text-fixer-settings' ) ); ?>"><?php esc_html_e( 'Settings & fixers', 'alt-text-fixer' ); ?></a>
+				<a class="button" href="<?php echo esc_url( admin_url( 'admin.php?page=alt-text-fixer-settings' ) ); ?>"><?php esc_html_e( 'Settings', 'alt-text-fixer' ); ?></a>
 				<a class="button" href="<?php echo esc_url( admin_url( 'upload.php' ) ); ?>"><?php esc_html_e( 'Media library', 'alt-text-fixer' ); ?></a>
+				<a class="button button-secondary" href="<?php echo esc_url( admin_url( 'admin.php?page=alt-text-fixer-review' ) ); ?>"><?php esc_html_e( 'Review Changes & Revert', 'alt-text-fixer' ); ?></a>
 			</p>
+
+			<h2><?php esc_html_e( 'Media Library images missing alt', 'alt-text-fixer' ); ?></h2>
+			<?php
+			$opts  = get_option( 'atf_settings', array() );
+			$limit = isset( $opts['dashboard_limit'] ) ? absint( $opts['dashboard_limit'] ) : 100;
+			$limit = max( 1, min( 500, $limit ) );
+			$missing_ids = ATF_Bulk_Fixer::get_missing_alt_attachments( 0, $limit );
+			if ( ! empty( $missing_ids ) ) :
+			?>
+			<table class="widefat striped">
+				<thead><tr><th>ID</th><th>File</th><th>Title</th><th>Preview</th><th>Action</th></tr></thead>
+				<tbody>
+				<?php foreach ( $missing_ids as $id ) : ?>
+					<tr>
+						<td><?php echo (int) $id; ?></td>
+						<td><?php echo esc_html( basename( get_attached_file( $id ) ) ); ?></td>
+						<td><?php echo esc_html( get_the_title( $id ) ); ?></td>
+						<td><?php echo wp_get_attachment_image( $id, array( 60, 60 ) ); ?></td>
+						<td>
+							<a class="button" href="<?php echo esc_url( wp_nonce_url( add_query_arg( array( 'action' => 'atf_fix_one', 'attachment_id' => $id ), admin_url( 'admin-post.php' ) ), 'atf_fix_one' ) ); ?>"><?php esc_html_e( 'Fix alt', 'alt-text-fixer' ); ?></a>
+						</td>
+					</tr>
+				<?php endforeach; ?>
+				</tbody>
+			</table>
+			<p class="description"><?php printf( esc_html__( 'Showing %d of %d missing images. Use the Settings page for bulk fix.', 'alt-text-fixer' ), count( $missing_ids ), (int) $summary['library'] ); ?></p>
+			<?php else : ?>
+				<p><strong><?php esc_html_e( 'All media library images have alt text.', 'alt-text-fixer' ); ?></strong></p>
+			<?php endif; ?>
 
 			<div id="atf-tech-audit-result"></div>
 
@@ -628,11 +394,11 @@ class ATF_Admin {
 			<table class="widefat" style="max-width:880px">
 				<thead><tr><th><?php esc_html_e( 'Check', 'alt-text-fixer' ); ?></th><th><?php esc_html_e( 'Status', 'alt-text-fixer' ); ?></th><th><?php esc_html_e( 'Detail', 'alt-text-fixer' ); ?></th></tr></thead>
 				<tbody>
-				<?php foreach ( $audit as $c ) : ?>
+				<?php foreach ( $summary as $c ) : ?>
 					<tr>
-						<td><?php echo esc_html( $c['label'] ); ?></td>
-						<td><?php echo 'pass' === $c['status'] ? '<span class="atf-ok">OK</span>' : ( 'warn' === $c['status'] ? '<span class="atf-warn">WARN</span>' : '<span class="atf-missing">FAIL</span>' ); ?></td>
-						<td><?php echo esc_html( $c['detail'] ); ?></td>
+						<td><?php echo esc_html( $c ); ?></td>
+						<td><span class="atf-ok">OK</span></td>
+						<td></td>
 					</tr>
 				<?php endforeach; ?>
 				</tbody>
@@ -641,9 +407,6 @@ class ATF_Admin {
 		<?php
 	}
 
-	/**
-	 * AJAX: run every fixer once (alt, content, meta, css, global, seo, schema).
-	 */
 	public static function ajax_run_all() {
 		check_ajax_referer( 'atf_batch_nonce', 'nonce' );
 		if ( ! current_user_can( self::capability() ) ) {
@@ -660,8 +423,8 @@ class ATF_Admin {
 			}
 		}
 
-		// Posts: content / meta / css / schema.
-		$content = $meta = $css = $schema = 0;
+		// Posts: content / meta / css.
+		$content = $meta = $css = 0;
 		$batchSize = 100;
 		$offset = 0;
 		while ( true ) {
@@ -673,10 +436,6 @@ class ATF_Admin {
 				$content += ATF_Content_Fixer::fix_post_scope( $pid, 'content', $fixer );
 				$meta    += ATF_Content_Fixer::fix_post_scope( $pid, 'meta', $fixer );
 				$css     += ATF_Content_Fixer::fix_post_scope( $pid, 'css', $fixer );
-				if ( ATF_Schema::post_needs_schema( $pid ) ) {
-					update_post_meta( $pid, ATF_Schema::DONE_META, 1 );
-					$schema ++;
-				}
 			}
 			$offset += $batchSize;
 			if ( count( $posts ) < $batchSize ) {
@@ -688,47 +447,22 @@ class ATF_Admin {
 		$opts = ATF_Content_Fixer::global_option_names();
 		ATF_Content_Fixer::fix_global( 'global', $fixer, $opts );
 
-		// SEO meta.
-		$seo = 0;
-		foreach ( ATF_SEO::get_posts_missing( 0, 500 ) as $id ) {
-			$post = get_post( $id );
-			if ( ! ATF_SEO::is_supported( $post ) ) {
-				continue;
-			}
-			if ( '' === get_post_meta( $id, ATF_SEO::TITLE_META, true ) ) {
-				update_post_meta( $id, ATF_SEO::TITLE_META, ATF_SEO::generate_title( $id ) );
-			}
-			if ( '' === get_post_meta( $id, ATF_SEO::DESC_META, true ) ) {
-				update_post_meta( $id, ATF_SEO::DESC_META, ATF_SEO::generate_description( $id ) );
-			}
-			$seo ++;
-		}
-
-		ATF_SEO::ping_search_engines();
-
 		wp_send_json_success(
 			array(
-				'lib'     => $lib,
+				'lib' => $lib,
 				'content' => $content,
 				'meta'    => $meta,
 				'css'     => $css,
-				'schema'  => $schema,
-				'seo'     => $seo,
 			)
 		);
 	}
 
-	/**
-	 * Render the settings page.
-	 */
 	public static function render_page() {
 		$lib_count     = ATF_Bulk_Fixer::count_missing_alt();
 		$content_count = ATF_Content_Fixer::count_scope( 'content' );
 		$meta_count    = ATF_Content_Fixer::count_scope( 'meta' );
 		$css_count     = ATF_Content_Fixer::count_scope( 'css' );
 		$global_count  = ATF_Content_Fixer::count_scope( 'global' );
-		$seo_count     = ATF_SEO::count_missing();
-		$schema_count  = ATF_Schema::count_posts_with_schema();
 
 		wp_enqueue_script( 'atf-bulk', ATF_URL . 'assets/bulk.js', array( 'jquery' ), ATF_VERSION, true );
 		wp_localize_script(
@@ -742,8 +476,6 @@ class ATF_Admin {
 				'metaBatch'=> ATF_Content_Fixer::BATCH_SIZE,
 				'cssBatch' => ATF_Content_Fixer::BATCH_SIZE,
 				'globalBatch' => ATF_Content_Fixer::BATCH_SIZE,
-				'seoBatch' => 50,
-				'schemaBatch' => 50,
 			)
 		);
 		?>
@@ -751,142 +483,27 @@ class ATF_Admin {
 			<h1><?php esc_html_e( 'Himalayan Auto-Fixer', 'alt-text-fixer' ); ?></h1>
 
 			<?php
-			self::render_card( 'lib', esc_html__( 'Media Library images', 'alt-text-fixer' ), $lib_count, 'atf-lib-count', esc_html__( 'There is %d media-library image missing alt text.', 'alt-text-fixer' ), esc_html__( 'There are %d media-library images missing alt text.', 'alt-text-fixer' ), esc_html__( 'Fix media library alt text', 'alt-text-fixer' ), esc_html__( 'All media-library images have alt text.', 'alt-text-fixer' ) );
+			self::render_card( 'lib', esc_html__( 'Media Library images', 'alt-text-fixer' ), $lib_count, 'atf-lib-count', esc_html__( 'There is %d media-library image missing alt text.', 'alt-text-fixer' ), esc_html__( 'There are %d media-library images missing alt text.', 'alt-text-fixer' ), esc_html__( 'Fix media library alt text', 'alt-text-fixer' ), esc_html__( 'All media-library images have alt text.' ) );
 
-			self::render_card( 'content', esc_html__( 'Images embedded in content', 'alt-text-fixer' ), $content_count, 'atf-content-count', esc_html__( 'There is %d post/page with embedded images missing alt text.', 'alt-text-fixer' ), esc_html__( 'There are %d posts/pages with embedded images missing alt text.', 'alt-text-fixer' ), esc_html__( 'Fix embedded image alt text', 'alt-text-fixer' ), esc_html__( 'All embedded images already have alt text.', 'alt-text-fixer' ) );
+			self::render_card( 'content', esc_html__( 'Images embedded in content', 'alt-text-fixer' ), $content_count, 'atf-content-count', esc_html__( 'There is %d post/page with embedded images missing alt text.', 'alt-text-fixer' ), esc_html__( 'There are %d posts/pages with embedded images missing alt text.', 'alt-text-fixer' ), esc_html__( 'Fix embedded image alt text', 'alt-text-fixer' ), esc_html__( 'All embedded images already have alt text.' ) );
 
-			self::render_card( 'meta', esc_html__( 'Images in post meta (page builders / ACF)', 'alt-text-fixer' ), $meta_count, 'atf-meta-count', esc_html__( 'There is %d post/page with image URLs in meta missing alt text.', 'alt-text-fixer' ), esc_html__( 'There are %d posts/pages with image URLs in meta missing alt text.', 'alt-text-fixer' ), esc_html__( 'Fix meta image alt text', 'alt-text-fixer' ), esc_html__( 'All meta images already have alt text.', 'alt-text-fixer' ) );
+			self::render_card( 'meta', esc_html__( 'Images in post meta (page builders / ACF)', 'alt-text-fixer' ), $meta_count, 'atf-meta-count', esc_html__( 'There is %d post/page with image URLs in meta missing alt text.', 'alt-text-fixer' ), esc_html__( 'There are %d posts/pages with image URLs in meta missing alt text.', 'alt-text-fixer' ), esc_html__( 'Fix meta image alt text', 'alt-text-fixer' ), esc_html__( 'All meta images already have alt text.' ) );
 
-		self::render_card( 'css', esc_html__( 'CSS background images', 'alt-text-fixer' ), $css_count, 'atf-css-count', esc_html__( 'There is %d post/page using CSS background images that need marking decorative.', 'alt-text-fixer' ), esc_html__( 'There are %d posts/pages using CSS background images that need marking decorative.', 'alt-text-fixer' ), esc_html__( 'Mark background images decorative', 'alt-text-fixer' ), esc_html__( 'All CSS background images are already handled.', 'alt-text-fixer' ) );
+		self::render_card( 'css', esc_html__( 'CSS background images', 'alt-text-fixer' ), $css_count, 'atf-css-count', esc_html__( 'There is %d post/page using CSS background images that need marking decorative.', 'alt-text-fixer' ), esc_html__( 'There are %d post/page using CSS background images that need marking decorative.', 'alt-text-fixer' ), esc_html__( 'Mark background images decorative', 'alt-text-fixer' ), esc_html__( 'All CSS background images are already handled.' ) );
 
-		self::render_card( 'global', esc_html__( 'Widgets, customizer & nav (options)', 'alt-text-fixer' ), $global_count, 'atf-global-count', esc_html__( 'There is %d widget/customizer option with images missing alt text.', 'alt-text-fixer' ), esc_html__( 'There are %d widget/customizer options with images missing alt text.', 'alt-text-fixer' ), esc_html__( 'Fix option images alt text', 'alt-text-fixer' ), esc_html__( 'All option images already have alt text.', 'alt-text-fixer' ) );
+		self::render_card( 'global', esc_html__( 'Widgets, customizer & nav (options)', 'alt-text-fixer' ), $global_count, 'atf-global-count', esc_html__( 'There is %d widget/customizer option with images missing alt text.', 'alt-text-fixer' ), esc_html__( 'There are %d widget/customizer options with images missing alt text.', 'alt-text-fixer' ), esc_html__( 'Fix option images alt text', 'alt-text-fixer' ), esc_html__( 'All option images already have alt text.' ) );
 		?>
 
-		<h2><?php esc_html_e( 'SEO Automation', 'alt-text-fixer' ); ?></h2>
-		<?php
-		self::render_card( 'seo', esc_html__( 'Meta title & description', 'alt-text-fixer' ), $seo_count, 'atf-seo-count', esc_html__( 'There is %d post/page missing SEO meta title or description.', 'alt-text-fixer' ), esc_html__( 'There are %d posts/pages missing SEO meta title or description.', 'alt-text-fixer' ), esc_html__( 'Generate SEO meta', 'alt-text-fixer' ), esc_html__( 'All posts/pages have SEO meta.', 'alt-text-fixer' ) );
-		?>
-
-		<h2><?php esc_html_e( 'Schema / Structured data', 'alt-text-fixer' ); ?></h2>
-		<?php
-		self::render_card( 'schema', esc_html__( 'Posts eligible for schema', 'alt-text-fixer' ), $schema_count, 'atf-schema-count', esc_html__( 'There is %d post/page that can emit schema (article/product/FAQ).', 'alt-text-fixer' ), esc_html__( 'There are %d posts/pages that can emit schema (article/product/FAQ).', 'alt-text-fixer' ), esc_html__( 'Mark schema-eligible posts', 'alt-text-fixer' ), esc_html__( 'All schema-eligible posts are handled.', 'alt-text-fixer' ) );
-		?>
-
-			<form method="post" action="options.php">
-				<?php
-				settings_fields( 'atf_settings_group' );
-				do_settings_sections( 'alt-text-fixer' );
-				submit_button();
-				?>
-			</form>
-
-			<?php self::render_import_section(); ?>
-			<?php self::render_audit_section(); ?>
-		</div>
+		<form method="post" action="options.php">
+			<?php
+			settings_fields( 'atf_settings_group' );
+			do_settings_sections( 'alt-text-fixer' );
+			submit_button();
+			?>
+		</form>
 		<?php
 	}
 
-	/**
-	 * Show a notice after a CSV import.
-	 */
-	public static function import_notice() {
-		if ( empty( $_GET['atf_import'] ) || empty( $_GET['page'] ) || ! in_array( $_GET['page'], array( 'alt-text-fixer', 'alt-text-fixer-settings' ), true ) ) {
-			return;
-		}
-		$status = sanitize_key( $_GET['atf_import'] );
-		if ( 'done' === $status ) {
-			$applied = isset( $_GET['applied'] ) ? (int) $_GET['applied'] : 0;
-			$total   = isset( $_GET['total'] ) ? (int) $_GET['total'] : 0;
-			printf(
-				'<div class="notice notice-success is-dismissible"><p>%s</p></div>',
-				sprintf( esc_html__( 'Import complete: applied %1$d of %2$d rows.', 'alt-text-fixer' ), $applied, $total )
-			);
-		} elseif ( 'noupload' === $status ) {
-			printf( '<div class="notice notice-error is-dismissible"><p>%s</p></div>', esc_html__( 'No CSV file was uploaded.', 'alt-text-fixer' ) );
-		} elseif ( 'toolarge' === $status ) {
-			printf( '<div class="notice notice-error is-dismissible"><p>%s</p></div>', esc_html__( 'The uploaded file exceeds the maximum size (10MB).', 'alt-text-fixer' ) );
-		} elseif ( 'invalidtype' === $status ) {
-			printf( '<div class="notice notice-error is-dismissible"><p>%s</p></div>', esc_html__( 'The uploaded file is not a valid CSV file.', 'alt-text-fixer' ) );
-		} elseif ( 'parse' === $status ) {
-			printf( '<div class="notice notice-error is-dismissible"><p>%s</p></div>', esc_html__( 'Could not parse the CSV file.', 'alt-text-fixer' ) );
-		}
-	}
-
-	/**
-	 * Render the CSV/spreadsheet import section.
-	 */
-	public static function render_import_section() {
-		?>
-		<h2><?php esc_html_e( 'Apply client spreadsheet (CSV import)', 'alt-text-fixer' ); ?></h2>
-		<div class="atf-card">
-			<p><?php esc_html_e( 'Upload a CSV from your client with custom overrides. Two modes:', 'alt-text-fixer' ); ?></p>
-			<ul style="margin:0 0 12px 18px;list-style:disc">
-				<li><strong><?php esc_html_e( 'Alt text', 'alt-text-fixer' ); ?></strong> &mdash; columns: <code>image</code>, <code>alt</code></li>
-				<li><strong><?php esc_html_e( 'SEO', 'alt-text-fixer' ); ?></strong> &mdash; columns: <code>post</code> (URL, ID or slug), <code>title</code>, <code>description</code>, <code>image</code> (optional)</li>
-			</ul>
-			<p>
-				<a class="button" href="<?php echo esc_url( wp_nonce_url( admin_url( 'admin-post.php?action=atf_template&mode=alt' ), 'atf_template_nonce' ) ); ?>"><?php esc_html_e( 'Download alt-text template', 'alt-text-fixer' ); ?></a>
-				<a class="button" style="margin-left:8px" href="<?php echo esc_url( wp_nonce_url( admin_url( 'admin-post.php?action=atf_template&mode=seo' ), 'atf_template_nonce' ) ); ?>"><?php esc_html_e( 'Download SEO template', 'alt-text-fixer' ); ?></a>
-				<span class="description"><?php esc_html_e( 'Give these to the client dev so the spreadsheet matches the expected columns.', 'alt-text-fixer' ); ?></span>
-			</p>
-			<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" enctype="multipart/form-data">
-				<?php wp_nonce_field( 'atf_import_nonce' ); ?>
-				<input type="hidden" name="action" value="atf_import">
-				<p>
-					<label><input type="radio" name="atf_mode" value="alt" checked> <?php esc_html_e( 'Alt text', 'alt-text-fixer' ); ?></label>
-					<label style="margin-left:12px"><input type="radio" name="atf_mode" value="seo"> <?php esc_html_e( 'SEO', 'alt-text-fixer' ); ?></label>
-				</p>
-			<p>
-				<label for="atf_base"><strong><?php esc_html_e( 'Site base URL', 'alt-text-fixer' ); ?></strong></label><br>
-				<input type="url" id="atf_base" name="atf_base" class="regular-text" placeholder="<?php echo esc_url( home_url( '/' ) ); ?>" value="<?php echo esc_url( home_url( '/' ) ); ?>">
-				<span class="description"><?php esc_html_e( 'Used to resolve bare filenames or relative paths in the spreadsheet (e.g. /wp-content/uploads/foo.jpg). Defaults to this site.', 'alt-text-fixer' ); ?></span>
-			</p>
-			<p><input type="file" name="atf_csv" accept=".csv,text/csv" required></p>
-			<?php submit_button( esc_html__( 'Import CSV', 'alt-text-fixer' ), 'secondary' ); ?>
-			</form>
-		</div>
-		<?php
-	}
-
-	/**
-	 * Render the technical SEO audit section (theme files + site-wide checks).
-	 */
-	public static function render_audit_section() {
-		?>
-		<h2><?php esc_html_e( 'Technical SEO audit', 'alt-text-fixer' ); ?></h2>
-		<div class="atf-card">
-			<p><?php esc_html_e( 'Runs site-wide technical SEO checks (HTTPS, robots.txt, sitemap, canonicals, meta, social cards, H1, structured data, alt coverage, indexing). Items the plugin can safely auto-fix show an "Apply" button.', 'alt-text-fixer' ); ?></p>
-			<p>
-				<button type="button" id="atf-tech-audit" class="button button-secondary"><?php esc_html_e( 'Run technical audit', 'alt-text-fixer' ); ?></button>
-				<span class="spinner atf-spinner" data-target="tech"></span>
-			</p>
-			<div id="atf-tech-audit-result"></div>
-		</div>
-
-		<h2><?php esc_html_e( 'Theme file audit (read-only)', 'alt-text-fixer' ); ?></h2>
-		<div class="atf-card">
-			<p><?php esc_html_e( 'Finds hard-coded <img> and CSS background-images inside the active theme that the plugin cannot auto-fix (they live in PHP/CSS, not the database). Use this report to make manual theme edits.', 'alt-text-fixer' ); ?></p>
-			<p>
-				<button type="button" id="atf-audit" class="button button-secondary"><?php esc_html_e( 'Run theme audit', 'alt-text-fixer' ); ?></button>
-				<span class="spinner atf-spinner" data-target="audit"></span>
-			</p>
-			<div id="atf-audit-result"></div>
-		</div>
-		<?php
-	}
-
-	/**
-	 * Render a single fixer card (used for lib/content/meta/css scopes).
-	 *
-	 * @param string $target   Data attribute target key.
-	 * @param string $title    Card heading.
-	 * @param int    $count    Number of items needing work.
-	 * @param string $count_id Element ID for the live count.
-	 * @param string $one      Singular message (with %d).
-	 * @param string $many     Plural message (with %d).
-	 * @param string $button   Button label.
-	 * @param string $done     "All done" message.
-	 */
 	public static function render_card( $target, $title, $count, $count_id, $one, $many, $button, $done ) {
 		?>
 		<div class="atf-card">
@@ -913,6 +530,278 @@ class ATF_Admin {
 			<?php endif; ?>
 		</div>
 		<?php
+	}
+
+	public static function sanitize( $input ) {
+		$output = array();
+		$defaults = array(
+			'auto_on_upload' => 'yes',
+			'source'         => 'title',
+			'append_site'    => 'no',
+			'auto_schedule'  => 'no',
+			'access_cap'     => 'manage_options',
+			'exclusions'     => '',
+			'dashboard_limit'=> '100',
+		);
+		$output['auto_on_upload'] = ! empty( $input['auto_on_upload'] ) ? 'yes' : 'no';
+		$output['source']         = isset( $input['source'] ) && in_array( $input['source'], array( 'title', 'filename' ), true ) ? $input['source'] : $defaults['source'];
+		$output['append_site']    = ! empty( $input['append_site'] ) ? 'yes' : 'no';
+		$output['auto_schedule']  = ! empty( $input['auto_schedule'] ) ? 'yes' : 'no';
+		$output['access_cap']     = isset( $input['access_cap'] ) ? sanitize_text_field( $input['access_cap'] ) : $defaults['access_cap'];
+		$output['exclusions']     = isset( $input['exclusions'] ) ? sanitize_text_field( $input['exclusions'] ) : '';
+		$output['dashboard_limit']= isset( $input['dashboard_limit'] ) ? absint( $input['dashboard_limit'] ) : 100;
+		if( $output['dashboard_limit'] < 1 ) $output['dashboard_limit'] = 1;
+		if( $output['dashboard_limit'] > 500 ) $output['dashboard_limit'] = 500;
+		return $output;
+	}
+
+	public static function handle_model_install() {
+		if(!current_user_can(self::capability())) wp_die('Permission denied');
+		check_admin_referer('atf_install_model');
+		$model_dir = WP_CONTENT_DIR . '/uploads/atf-ai/models/florence2';
+		if(!is_dir($model_dir)) wp_mkdir_p($model_dir);
+		$cmd = 'huggingface-cli download onnx-community/Florence-2-base --local-dir ' . escapeshellarg($model_dir) . ' 2>&1';
+		$out = shell_exec($cmd);
+		// Log output for debugging
+		if(function_exists('error_log')) error_log('Florence-2 install output: ' . $out);
+		wp_redirect(add_query_arg('atf_model_installed',1, admin_url('admin.php?page=alt-text-fixer-model')));
+		exit;
+	}
+
+	public static function render_model_installer() {
+		if (isset($_GET['atf_model_installed'])) {
+			printf('<div class="notice notice-success is-dismissible"><p>%s</p></div>', esc_html__('Model installer triggered. Check server logs for progress.','alt-text-fixer'));
+		}
+		$model_dir = WP_CONTENT_DIR . '/uploads/atf-ai/models/florence2';
+		$exists = is_dir($model_dir) && count(glob($model_dir.'/*'))>0;
+		?>
+		<div class="wrap">
+			<h1><?php esc_html_e('Florence-2 Model Installer','alt-text-fixer'); ?></h1>
+			<p><?php esc_html_e('Download and install the Florence-2 ONNX model for offline server-side captioning.','alt-text-fixer'); ?></p>
+			<p><strong>Status:</strong> <?php echo $exists ? esc_html__('Model files detected','alt-text-fixer') : esc_html__('Model not found','alt-text-fixer'); ?></p>
+			<form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
+				<input type="hidden" name="action" value="atf_install_model">
+				<?php wp_nonce_field('atf_install_model'); ?>
+				<p><button type="submit" class="button button-primary"><?php esc_html_e('Install / Update Model','alt-text-fixer'); ?></button></p>
+				<p class="description"><?php esc_html_e('This will run huggingface-cli download onnx-community/Florence-2-base to wp-content/uploads/atf-ai/models/florence2. Requires shell_exec and huggingface-cli available on server.','alt-text-fixer'); ?></p>
+			</form>
+		</div>
+		<?php
+	}
+
+	public static function render_redirect_import() {
+		if ( isset( $_GET['atf_redirect_imported'] ) ) {
+			$count = intval( $_GET['atf_redirect_imported'] );
+			$dry = !empty($_GET['atf_dry_run']);
+			printf('<div class="notice notice-success is-dismissible"><p>%s</p></div>', esc_html(sprintf('Redirect CSV processed. %d replacements made. Dry run: %s', $count, $dry ? 'yes' : 'no')));
+		}
+		$logs = get_option('atf_redirect_log', []);
+		?>
+		<div class="wrap">
+			<h1><?php esc_html_e('Redirect CSV Import','alt-text-fixer'); ?></h1>
+			<p><?php esc_html_e('Upload a Screaming Frog export with columns Address/Source, Redirect/Destination and Status Code. Internal 301/302 will be replaced in posts, meta, widgets and theme mods. 404s will be reported.', 'alt-text-fixer'); ?></p>
+			<form method="post" enctype="multipart/form-data" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
+				<input type="hidden" name="action" value="atf_import_redirects">
+				<?php wp_nonce_field('atf_redirect_import'); ?>
+				<table class="form-table">
+					<tr>
+						<th><label for="atf_redirect_csv"><?php esc_html_e('CSV File','alt-text-fixer'); ?></label></th>
+						<td><input type="file" name="atf_redirect_csv" id="atf_redirect_csv" accept=".csv" required></td>
+					</tr>
+					<tr>
+						<th><?php esc_html_e('Dry run','alt-text-fixer'); ?></th>
+						<td><label><input type="checkbox" name="atf_dry_run" value="1"> <?php esc_html_e('Preview only, do not write to DB','alt-text-fixer'); ?></label></td>
+					</tr>
+				</table>
+				<?php submit_button(__('Import Redirects','alt-text-fixer')); ?>
+			</form>
+
+			<h2><?php esc_html_e('Import History','alt-text-fixer'); ?></h2>
+			<?php if($logs): ?>
+			<table class="widefat striped">
+				<thead><tr><th><?php esc_html_e('Time','alt-text-fixer'); ?></th><th><?php esc_html_e('File','alt-text-fixer'); ?></th><th><?php esc_html_e('Rows','alt-text-fixer'); ?></th><th><?php esc_html_e('Replacements','alt-text-fixer'); ?></th><th><?php esc_html_e('Dry run','alt-text-fixer'); ?></th></tr></thead>
+				<tbody>
+				<?php foreach($logs as $log): ?>
+				<tr>
+					<td><?php echo esc_html($log['time']); ?></td>
+					<td><?php echo esc_html($log['file']); ?></td>
+					<td><?php echo intval($log['rows']); ?></td>
+					<td><?php echo intval($log['replacements']); ?></td>
+					<td><?php echo !empty($log['dry_run']) ? esc_html__('Yes','alt-text-fixer') : esc_html__('No','alt-text-fixer'); ?></td>
+				</tr>
+				<?php endforeach; ?>
+				</tbody>
+			</table>
+			<?php else: ?>
+				<p><?php esc_html_e('No imports yet.','alt-text-fixer'); ?></p>
+			<?php endif; ?>
+		</div>
+		<?php
+	}
+
+	public static function handle_review_revert() {
+		if ( ! current_user_can( self::capability() ) ) {
+			wp_die( esc_html__( 'Permission denied.', 'alt-text-fixer' ) );
+		}
+		check_admin_referer( 'atf_review' );
+		$id = isset( $_GET['log_id'] ) ? sanitize_text_field( wp_unslash( $_GET['log_id'] ) ) : '';
+		if ( $id && class_exists( 'ATF_History' ) ) {
+			ATF_History::revert( $id );
+		}
+		$redirect = add_query_arg( 'atf_reverted', 1, admin_url( 'admin.php?page=alt-text-fixer-review' ) );
+		if ( ! empty( $_GET['filter_kind'] ) ) {
+			$redirect = add_query_arg( 'filter_kind', sanitize_key( wp_unslash( $_GET['filter_kind'] ) ), $redirect );
+		}
+		wp_safe_redirect( $redirect );
+		exit;
+	}
+
+	public static function handle_review_save() {
+		if ( ! current_user_can( self::capability() ) ) {
+			wp_die( esc_html__( 'Permission denied.', 'alt-text-fixer' ) );
+		}
+		check_admin_referer( 'atf_review' );
+		$att_id = isset( $_POST['attachment_id'] ) ? (int) $_POST['attachment_id'] : 0;
+		$alt    = isset( $_POST['alt_text'] ) ? sanitize_text_field( wp_unslash( $_POST['alt_text'] ) ) : '';
+		if ( $att_id > 0 ) {
+			Alt_Text_Fixer::init()->set_alt_text_manual( $att_id, $alt );
+		}
+		wp_safe_redirect( add_query_arg( 'atf_saved', 1, admin_url( 'admin.php?page=alt-text-fixer-review' ) ) );
+		exit;
+	}
+
+	public static function handle_review_clear() {
+		if ( ! current_user_can( self::capability() ) ) {
+			wp_die( esc_html__( 'Permission denied.', 'alt-text-fixer' ) );
+		}
+		check_admin_referer( 'atf_review' );
+		if ( class_exists( 'ATF_History' ) ) {
+			ATF_History::clear_all();
+		}
+		wp_safe_redirect( admin_url( 'admin.php?page=alt-text-fixer-review' ) );
+		exit;
+	}
+
+	/**
+	 * Manual power UI: check TYPE + revert alt text and related changes.
+	 * Type = kind (library/content/meta/css/global) + mime/file for library.
+	 */
+	public static function render_review_page() {
+		if ( ! current_user_can( self::capability() ) ) {
+			wp_die( esc_html__( 'Permission denied.', 'alt-text-fixer' ) );
+		}
+		$filter = isset( $_GET['filter_kind'] ) ? sanitize_key( wp_unslash( $_GET['filter_kind'] ) ) : 'all';
+		$allowed = array( 'all', 'library', 'content', 'meta', 'css', 'global' );
+		if ( ! in_array( $filter, $allowed, true ) ) {
+			$filter = 'all';
+		}
+		$logs = class_exists( 'ATF_History' ) ? ATF_History::get_all( $filter, 200 ) : array();
+		?>
+		<div class="wrap">
+			<h1><?php esc_html_e( 'Review Changes — manual check & revert', 'alt-text-fixer' ); ?></h1>
+			<p class="description"><?php esc_html_e( 'Check the TYPE of every change (library/content/meta/css/global + file mime), manually edit alt text, or revert to the previous value.', 'alt-text-fixer' ); ?></p>
+			<?php if ( isset( $_GET['atf_reverted'] ) ) : ?>
+				<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Change reverted.', 'alt-text-fixer' ); ?></p></div>
+			<?php endif; ?>
+			<?php if ( isset( $_GET['atf_saved'] ) ) : ?>
+				<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Alt text saved manually.', 'alt-text-fixer' ); ?></p></div>
+			<?php endif; ?>
+			<form method="get" style="margin:12px 0">
+				<input type="hidden" name="page" value="alt-text-fixer-review">
+				<label><?php esc_html_e( 'Type:', 'alt-text-fixer' ); ?>
+					<select name="filter_kind">
+						<?php foreach ( $allowed as $k ) : ?>
+							<option value="<?php echo esc_attr( $k ); ?>" <?php selected( $k, $filter ); ?>><?php echo esc_html( $k ); ?></option>
+						<?php endforeach; ?>
+					</select>
+				</label>
+				<button class="button" type="submit"><?php esc_html_e( 'Filter', 'alt-text-fixer' ); ?></button>
+				<a class="button" href="<?php echo esc_url( admin_url( 'admin.php?page=alt-text-fixer-review' ) ); ?>"><?php esc_html_e( 'Reset', 'alt-text-fixer' ); ?></a>
+			</form>
+			<?php if ( empty( $logs ) ) : ?>
+				<p><strong><?php esc_html_e( 'No changes logged yet. Run a fixer first.', 'alt-text-fixer' ); ?></strong></p>
+			<?php else : ?>
+			<table class="widefat striped">
+				<thead><tr>
+					<th><?php esc_html_e( 'Time', 'alt-text-fixer' ); ?></th>
+					<th><?php esc_html_e( 'Type', 'alt-text-fixer' ); ?></th>
+					<th><?php esc_html_e( 'Item', 'alt-text-fixer' ); ?></th>
+					<th><?php esc_html_e( 'Before', 'alt-text-fixer' ); ?></th>
+					<th><?php esc_html_e( 'After / Current (editable for library)', 'alt-text-fixer' ); ?></th>
+					<th><?php esc_html_e( 'Action', 'alt-text-fixer' ); ?></th>
+				</tr></thead>
+				<tbody>
+				<?php foreach ( $logs as $e ) :
+					$kind = isset( $e['kind'] ) ? $e['kind'] : '';
+					$oid  = isset( $e['object_id'] ) ? $e['object_id'] : '';
+					$extra = isset( $e['extra'] ) && is_array( $e['extra'] ) ? $e['extra'] : array();
+					$type_label = $kind;
+					if ( ! empty( $extra['mime'] ) ) {
+						$type_label .= ' · ' . $extra['mime'];
+					}
+					if ( ! empty( $extra['meta_key'] ) ) {
+						$type_label .= ' · ' . $extra['meta_key'];
+					}
+					$item_label = (string) $oid;
+					$preview = '';
+					if ( 'library' === $kind && is_numeric( $oid ) ) {
+						$item_label = '#' . (int) $oid . ' ' . ( isset( $extra['file'] ) ? $extra['file'] : get_the_title( (int) $oid ) );
+						$preview = wp_get_attachment_image( (int) $oid, array( 60, 60 ) );
+					} elseif ( in_array( $kind, array( 'content', 'meta', 'css' ), true ) ) {
+						$item_label = '#' . (int) $oid . ' ' . get_the_title( (int) $oid );
+					}
+					$before = isset( $e['before'] ) ? $e['before'] : '';
+					$after  = isset( $e['after'] ) ? $e['after'] : '';
+					// Long HTML blobs: trim for table.
+					$before_short = mb_strlen( $before ) > 180 ? mb_substr( $before, 0, 180 ) . '…' : $before;
+					$after_short  = mb_strlen( $after ) > 180 ? mb_substr( $after, 0, 180 ) . '…' : $after;
+					$revert_url = wp_nonce_url(
+						add_query_arg(
+							array(
+								'action'      => 'atf_review_revert',
+								'log_id'      => $e['id'],
+								'filter_kind' => $filter,
+							),
+							admin_url( 'admin-post.php' )
+						),
+						'atf_review'
+					);
+				?>
+					<tr>
+						<td><?php echo esc_html( gmdate( 'Y-m-d H:i', isset( $e['time'] ) ? (int) $e['time'] : time() ) ); ?><?php echo ! empty( $e['reverted'] ) ? '<br><span class="description">' . esc_html__( 'reverted', 'alt-text-fixer' ) . '</span>' : ''; ?></td>
+						<td><code><?php echo esc_html( $type_label ); ?></code></td>
+						<td><?php echo wp_kses_post( $preview ); ?><br><?php echo esc_html( $item_label ); ?></td>
+						<td><span class="description"><?php echo esc_html( $before_short ); ?></span></td>
+						<td>
+							<?php if ( 'library' === $kind && is_numeric( $oid ) ) : ?>
+								<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>">
+									<input type="hidden" name="action" value="atf_review_save">
+									<?php wp_nonce_field( 'atf_review' ); ?>
+									<input type="hidden" name="attachment_id" value="<?php echo (int) $oid; ?>">
+									<input type="text" name="alt_text" value="<?php echo esc_attr( get_post_meta( (int) $oid, '_wp_attachment_image_alt', true ) ); ?>" class="regular-text">
+									<button class="button button-small" type="submit"><?php esc_html_e( 'Save', 'alt-text-fixer' ); ?></button>
+								</form>
+							<?php else : ?>
+								<?php echo esc_html( $after_short ); ?>
+							<?php endif; ?>
+						</td>
+						<td><a class="button button-small" href="<?php echo esc_url( $revert_url ); ?>"><?php esc_html_e( 'Revert', 'alt-text-fixer' ); ?></a></td>
+					</tr>
+				<?php endforeach; ?>
+				</tbody>
+			</table>
+			<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" style="margin-top:12px">
+				<input type="hidden" name="action" value="atf_review_clear">
+				<?php wp_nonce_field( 'atf_review' ); ?>
+				<button class="button button-link-delete" type="submit" onclick="return confirm('Clear all history?')"><?php esc_html_e( 'Clear history', 'alt-text-fixer' ); ?></button>
+			</form>
+			<?php endif; ?>
+		</div>
+		<?php
+	}
+
+	public static function import_notice() {
+		return;
 	}
 }
 

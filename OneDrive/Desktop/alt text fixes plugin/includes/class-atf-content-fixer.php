@@ -298,7 +298,8 @@ class ATF_Content_Fixer {
 		if ( ! $post || false === strpos( $post->post_content, '<img' ) ) {
 			return 0;
 		}
-		$new = self::fix_html_imgs( $post->post_content, $post_id, $fixer, $fixed );
+		$old = $post->post_content;
+		$new = self::fix_html_imgs( $old, $post_id, $fixer, $fixed );
 		if ( $fixed > 0 ) {
 			wp_update_post(
 				array(
@@ -306,6 +307,19 @@ class ATF_Content_Fixer {
 					'post_content' => $new,
 				)
 			);
+			if ( class_exists( 'ATF_History' ) ) {
+				ATF_History::log(
+					'content',
+					(int) $post_id,
+					$old,
+					$new,
+					array(
+						'post_title' => $post->post_title,
+						'post_type'  => $post->post_type,
+						'count'      => (int) $fixed,
+					)
+				);
+			}
 		}
 		return $fixed;
 	}
@@ -416,6 +430,22 @@ class ATF_Content_Fixer {
 				$total_fixed += $fixed;
 				if ( $replaced !== $decoded ) {
 					update_post_meta( $post_id, $key, $replaced, $value );
+					if ( $fixed > 0 && class_exists( 'ATF_History' ) ) {
+						$store_before = is_string( $decoded ) ? $decoded : wp_json_encode( $decoded );
+						$store_after  = is_string( $replaced ) ? $replaced : wp_json_encode( $replaced );
+						ATF_History::log(
+							'meta',
+							(int) $post_id,
+							(string) $store_before,
+							(string) $store_after,
+							array(
+								'meta_key'  => $key,
+								'is_json'   => ! is_string( $decoded ),
+								'post_type' => get_post_type( $post_id ),
+								'count'     => (int) $fixed,
+							)
+						);
+					}
 				}
 			}
 		}
@@ -633,12 +663,26 @@ class ATF_Content_Fixer {
 		}
 
 		if ( $count > 0 ) {
+			$old_content = $post->post_content;
 			wp_update_post(
 				array(
 					'ID'           => $post_id,
 					'post_content' => $html,
 				)
 			);
+			if ( class_exists( 'ATF_History' ) ) {
+				ATF_History::log(
+					'css',
+					(int) $post_id,
+					$old_content,
+					$html,
+					array(
+						'post_title' => $post->post_title,
+						'post_type'  => $post->post_type,
+						'count'      => (int) $count,
+					)
+				);
+			}
 		}
 
 		return $count;
@@ -797,6 +841,21 @@ class ATF_Content_Fixer {
 			$generated = $fixer->generate_alt_text( $id );
 			if ( '' !== trim( (string) $generated ) ) {
 				update_post_meta( $id, '_wp_attachment_image_alt', $generated );
+				if ( class_exists( 'ATF_History' ) ) {
+					$p = get_post( $id );
+					ATF_History::log(
+						'library',
+						(int) $id,
+						'',
+						(string) $generated,
+						array(
+							'mime'   => $p ? $p->post_mime_type : '',
+							'file'   => basename( (string) get_attached_file( $id ) ),
+							'title'  => $p ? $p->post_title : '',
+							'source' => 'content-auto',
+						)
+					);
+				}
 				return $generated;
 			}
 		}
@@ -914,6 +973,20 @@ class ATF_Content_Fixer {
 			$fixed  += $sub_fixed;
 			if ( $updated !== $value ) {
 				update_option( $name, $updated );
+				if ( $sub_fixed > 0 && class_exists( 'ATF_History' ) ) {
+					$sb = is_string( $value ) ? $value : wp_json_encode( $value );
+					$sa = is_string( $updated ) ? $updated : wp_json_encode( $updated );
+					ATF_History::log(
+						'global',
+						$name,
+						(string) $sb,
+						(string) $sa,
+						array(
+							'is_json' => ! is_string( $value ),
+							'count'   => (int) $sub_fixed,
+						)
+					);
+				}
 			}
 		}
 		return $fixed;

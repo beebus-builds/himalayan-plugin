@@ -100,12 +100,108 @@ class Alt_Text_Fixer {
 	 * @return bool True on success, false otherwise.
 	 */
 	public function set_alt_text( $attachment_id ) {
+		$attachment_id = (int) $attachment_id;
 		$alt = $this->generate_alt_text( $attachment_id );
 		if ( empty( $alt ) ) {
 			return false;
 		}
+		$before = get_post_meta( $attachment_id, '_wp_attachment_image_alt', true );
+		if ( (string) $before === (string) $alt ) {
+			return false;
+		}
 		$updated = update_post_meta( $attachment_id, '_wp_attachment_image_alt', $alt );
+		if ( $updated && class_exists( 'ATF_History' ) ) {
+			$post = get_post( $attachment_id );
+			ATF_History::log(
+				'library',
+				$attachment_id,
+				(string) $before,
+				(string) $alt,
+				array(
+					'mime'       => $post ? $post->post_mime_type : '',
+					'file'       => basename( (string) get_attached_file( $attachment_id ) ),
+					'title'      => $post ? $post->post_title : '',
+					'source'     => 'auto',
+				)
+			);
+			// Per-attachment stack for fast "Revert" lookup in Media list.
+			$stack = get_post_meta( $attachment_id, '_atf_alt_history', true );
+			if ( ! is_array( $stack ) ) {
+				$stack = array();
+			}
+			array_unshift(
+				$stack,
+				array(
+					'time'   => time(),
+					'before' => (string) $before,
+					'after'  => (string) $alt,
+				)
+			);
+			update_post_meta( $attachment_id, '_atf_alt_history', array_slice( $stack, 0, 20 ) );
+		}
 		return (bool) $updated;
+	}
+
+	/**
+	 * Manually set alt text from the Review UI (gives user manual power).
+	 *
+	 * @param int    $attachment_id Attachment ID.
+	 * @param string $alt           New alt (empty string clears it).
+	 * @return bool
+	 */
+	public function set_alt_text_manual( $attachment_id, $alt ) {
+		$attachment_id = (int) $attachment_id;
+		$alt = sanitize_text_field( (string) $alt );
+		// Allow clearing: manual empty string is valid (unlike auto).
+		$before = get_post_meta( $attachment_id, '_wp_attachment_image_alt', true );
+		if ( (string) $before === (string) $alt ) {
+			return false;
+		}
+		if ( '' === $alt ) {
+			delete_post_meta( $attachment_id, '_wp_attachment_image_alt' );
+			$updated = true;
+		} else {
+			$updated = update_post_meta( $attachment_id, '_wp_attachment_image_alt', $alt );
+		}
+		if ( $updated && class_exists( 'ATF_History' ) ) {
+			$post = get_post( $attachment_id );
+			ATF_History::log(
+				'library',
+				$attachment_id,
+				(string) $before,
+				(string) $alt,
+				array(
+					'mime'   => $post ? $post->post_mime_type : '',
+					'file'   => basename( (string) get_attached_file( $attachment_id ) ),
+					'title'  => $post ? $post->post_title : '',
+					'source' => 'manual',
+				)
+			);
+		}
+		return (bool) $updated;
+	}
+
+	/**
+	 * Revert attachment alt to a previous value.
+	 *
+	 * @param int $attachment_id Attachment ID.
+	 * @return bool
+	 */
+	public function revert_alt_text( $attachment_id ) {
+		$attachment_id = (int) $attachment_id;
+		$stack = get_post_meta( $attachment_id, '_atf_alt_history', true );
+		if ( empty( $stack ) || ! is_array( $stack ) ) {
+			return false;
+		}
+		$last = array_shift( $stack );
+		$before = isset( $last['before'] ) ? (string) $last['before'] : '';
+		if ( '' === $before ) {
+			delete_post_meta( $attachment_id, '_wp_attachment_image_alt' );
+		} else {
+			update_post_meta( $attachment_id, '_wp_attachment_image_alt', $before );
+		}
+		update_post_meta( $attachment_id, '_atf_alt_history', array_values( $stack ) );
+		return true;
 	}
 
 	/**
@@ -116,39 +212,35 @@ class Alt_Text_Fixer {
 	 */
 	public function generate_alt_text( $attachment_id ) {
 		$settings = get_option( 'atf_settings', array() );
-		$source   = isset( $settings['source'] ) ? $settings['source'] : 'title';
 
-		if ( 'filename' === $source ) {
-			$file = get_attached_file( $attachment_id );
-			$base = basename( $file );
-			$name = preg_replace( '/\.[^.]+$/', '', $base );
-		} else {
-			$post = get_post( $attachment_id );
-			$name = $post ? $post->post_title : '';
-		}
+		// 1. Try visual captioning first via filter. Returning a non-empty string makes AI the primary source.
+		$alt = apply_filters( 'atf_generate_alt', '', $attachment_id, '' );
 
-		$alt = $this->humanize( $name );
-
-		// Fallback: if the primary source is empty/too generic, derive from the
-		// post context (parent post or the post that embeds this image).
-		if ( '' === $alt || $this->is_generic( $alt ) ) {
-			$ctx = $this->context_label( $attachment_id );
-			if ( $ctx ) {
-				$alt = $ctx;
+		// 2. Metadata fallback is disabled by default – we want visual captioning only.
+		//    If you need a fallback, re-enable it below.
+		if ( empty( $alt ) ) {
+			// No metadata fallback. Keep alt empty so images remain flagged as missing
+			// until a visual caption is provided.
+			// Uncomment the block below to re-enable title/filename fallback.
+			/*
+			$source = isset( $settings['source'] ) ? $settings['source'] : 'title';
+			$name   = '';
+			if ( 'filename' === $source ) {
+				$file = get_attached_file( $attachment_id );
+				$base = basename( $file );
+				$name = preg_replace( '/\.[^.]+$/', '', $base );
+			} else {
+				$post = get_post( $attachment_id );
+				$name = $post ? $post->post_title : '';
 			}
+			$alt = $this->humanize( $name );
+			if ( '' === $alt || $this->is_generic( $alt ) ) {
+				$ctx = $this->context_label( $attachment_id );
+				if ( $ctx ) { $alt = $ctx; }
+			}
+			$alt = apply_filters( 'atf_generate_alt', $alt, $attachment_id, $name );
+			*/
 		}
-
-		/**
-		 * Filter the generated alt text for an attachment.
-		 *
-		 * Extensions (e.g. an AI vision provider) can return a string here to
-		 * override the metadata-based value.
-		 *
-		 * @param string $alt           Generated alt text.
-		 * @param int    $attachment_id Attachment ID.
-		 * @param string $name          Raw source string (title or file name).
-		 */
-		$alt = apply_filters( 'atf_generate_alt', $alt, $attachment_id, $name );
 
 		if ( ! empty( $settings['append_site'] ) && 'yes' === $settings['append_site'] ) {
 			$site = get_bloginfo( 'name' );
@@ -229,7 +321,7 @@ class Alt_Text_Fixer {
 		$raw  = preg_replace( '/[-_]+/', ' ', $raw );
 		$raw  = preg_replace( '/\s+/', ' ', $raw );
 		$raw  = trim( $raw );
-		$raw  = preg_replace( '/\b\w/u', function ( $m ) { return mb_strtoupper( $m[0] ); }, $raw );
+		$raw  = preg_replace_callback( '/\b\w/u', function ( $m ) { return mb_strtoupper( $m[0] ); }, $raw );
 		return $raw;
 	}
 
